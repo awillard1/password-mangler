@@ -32,26 +32,25 @@ logging.basicConfig(
 logging.warning("⚠️  This tool is for authorized penetration testing and security research only. Unauthorized use is illegal.")
 
 
-
-
 # ===========================
 # RESPONSIVE GUI WITH REAL-TIME PREVIEW
 # ===========================
 class ManglerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Password Mangler 2026 - ML Enhanced (Refactored)")
+        self.root.title("Password Mangler 2026 - ML Enhanced")
         self.root.geometry("1000x800")
         self.root.minsize(900, 700)
 
         self.input_file = tk.StringVar()
         self.output_file = tk.StringVar()
-        self.leak_file = tk.StringVar()
+        self.leak_path = tk.StringVar()  # Unified: file or directory
         self.ruleset = tk.StringVar(value="advanced")
         self.threads = tk.IntVar(value=os.cpu_count() or 8)
         self.max_vars = tk.IntVar(value=1000)
         self.targeted = tk.BooleanVar()
-        self.hashcat_rules = tk.BooleanVar(value=True)  # Default changed to True
+        self.hashcat_rules = tk.BooleanVar(value=True)
+        self.leak_is_directory = tk.BooleanVar(value=False)  # Toggle for directory selection
 
         self.task_queue = queue.Queue()
         self.stop_event = threading.Event()
@@ -65,8 +64,8 @@ class ManglerGUI:
         title_frame.pack(fill="x", pady=5)
         title_label = ttk.Label(
             title_frame, 
-            text="Password Mangler",
-            font=("Helvetica", 14, "bold")
+            text="Password Mangler 2026",
+            font=("Helvetica", 16, "bold")
         )
         title_label.pack()
 
@@ -80,13 +79,19 @@ class ManglerGUI:
         ttk.Button(controls, text="Browse", command=self.browse_input).grid(row=row, column=3, padx=5)
 
         row += 1
-        ttk.Label(controls, text="Leak File for ML:").grid(row=row, column=0, sticky="w", pady=5)
-        ttk.Entry(controls, textvariable=self.leak_file, width=65).grid(row=row, column=1, pady=5, columnspan=2)
+        ttk.Label(controls, text="ML Leak Source:").grid(row=row, column=0, sticky="w", pady=5)
+        ttk.Entry(controls, textvariable=self.leak_path, width=65).grid(row=row, column=1, pady=5, columnspan=2)
         ttk.Button(controls, text="Browse", command=self.browse_leak).grid(row=row, column=3, padx=5)
-        
+
+        row += 1
+        ttk.Checkbutton(
+            controls, 
+            text="Select Directory (multiple leak files)", 
+            variable=self.leak_is_directory
+        ).grid(row=row, column=1, columnspan=2, sticky="w", pady=5)
         row += 1
         ttk.Label(controls, text="(Optional - ML learns from leaked passwords)", 
-                 foreground="gray", font=("Helvetica", 8)).grid(row=row, column=1, sticky="w")
+                 foreground="gray", font=("Helvetica", 8)).grid(row=row, column=1, sticky="w", pady=(0,10))
 
         row += 1
         ttk.Label(controls, text="Output File:").grid(row=row, column=0, sticky="w", pady=5)
@@ -189,7 +194,6 @@ class ManglerGUI:
                 except:
                     pass
 
-        # Add the handler
         gui_handler = GUIHandler(self.log_text)
         gui_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         logging.getLogger().addHandler(gui_handler)
@@ -203,18 +207,24 @@ class ManglerGUI:
             self.input_file.set(file)
 
     def browse_leak(self):
-        file = filedialog.askopenfilename(
-            title="Select Leak File for ML",
-            filetypes=[["Text Files", "*.txt"], ["All Files", "*.*"]]
-        )
-        if file:
-            self.leak_file.set(file)
+        if self.leak_is_directory.get():
+            path = filedialog.askdirectory(
+                title="Select Directory Containing Leak Files"
+            )
+        else:
+            path = filedialog.askopenfilename(
+                title="Select Leak File for ML",
+                filetypes=[["Text Files", "*.txt"], ["All Files", "*.*"]]
+            )
+        if path:
+            self.leak_path.set(path)
 
     def browse_output(self):
+        default_ext = ".rule" if self.hashcat_rules.get() else ".txt"
         file = filedialog.asksaveasfilename(
             title="Save Output As",
-            defaultextension=".txt",
-            filetypes=[["Text Files", "*.txt"], ["All Files", "*.*"]]
+            defaultextension=default_ext,
+            filetypes=[["Rule Files", "*.rule"], ["Text Files", "*.txt"], ["All Files", "*.*"]]
         )
         if file:
             self.output_file.set(file)
@@ -229,8 +239,8 @@ class ManglerGUI:
                 messagebox.showerror("Error", "Provide input file or enable targeted/hashcat mode.")
                 return
             if not self.output_file.get():
-                # Default output file name for hashcat rules
-                self.output_file.set("mangled.rule")
+                default = "mangled.rule" if self.hashcat_rules.get() else "mangled.txt"
+                self.output_file.set(default)
 
             # UI updates
             self.start_btn.config(state="disabled")
@@ -257,18 +267,14 @@ class ManglerGUI:
     def run_mangling(self):
         """Background processing thread."""
         try:
-            # Callback for progress updates
             def progress_callback(msg_type, content):
                 self.task_queue.put((msg_type, content))
 
-            # Get parameters
-            leak = self.leak_file.get() if self.leak_file.get() else None
-            
-            # Preview mode for GUI
+            leak = self.leak_path.get() if self.leak_path.get() else None
+
+            # Preview generation
             if not self.hashcat_rules.get() and not self.stop_event.is_set():
-                # Generate preview samples
                 base_words = []
-                
                 if self.targeted.get():
                     self.task_queue.put(("log", "Starting targeted profiling..."))
                     base_words = mangler_process.interactive_profile()
@@ -279,7 +285,6 @@ class ManglerGUI:
                     except:
                         pass
                 
-                # Generate preview
                 preview_samples = []
                 for word in base_words[:3]:
                     if self.stop_event.is_set():
@@ -302,7 +307,7 @@ class ManglerGUI:
                 max_variations=self.max_vars.get(),
                 targeted=self.targeted.get(),
                 hashcat_rules=self.hashcat_rules.get(),
-                leak_file=leak,
+                leak_path=leak,  # Now supports file or directory
                 progress_callback=progress_callback
             )
 
@@ -331,13 +336,12 @@ class ManglerGUI:
                 elif typ == "status":
                     self.status_label.config(text=content, foreground="blue")
                     
-                elif typ == "progress":
-                    if self.progress["maximum"] > 0:
-                        self.progress["value"] = (content / self.progress["maximum"]) * 100
-                        
                 elif typ == "progress_max":
                     self.progress["maximum"] = content
                     self.progress["value"] = 0
+                    
+                elif typ == "progress":
+                    self.progress["value"] = content
                     
                 elif typ == "preview":
                     self.preview_text.delete(1.0, tk.END)
@@ -369,63 +373,37 @@ class ManglerGUI:
 # MAIN ENTRY POINT
 # ===========================
 def main():
-    """Main entry point for CLI and GUI modes."""
     parser = argparse.ArgumentParser(
         description="Password Mangler 2026 with ML Rule Induction",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Generate wordlist from input file
-  %(prog)s -i wordlist.txt -o output.txt --rules advanced
-  
-  # Use ML learning from leaked passwords
-  %(prog)s -i wordlist.txt -o output.txt --leak-file leaked.txt
-  
-  # Targeted profiling mode
-  %(prog)s -o output.txt --targeted
-  
-  # Generate Hashcat rules
-  %(prog)s -o rules.txt --hashcat-rules
-  
-  # Launch GUI
   %(prog)s --gui
+  %(prog)s -i rockyou.txt -o mangled.txt --leak leaks_dir/ --rules advanced
+  %(prog)s -o custom.rules --hashcat-rules --leak single_leak.txt
+  %(prog)s --targeted -o personal.txt
         """
     )
     
+    parser.add_argument("--gui", action="store_true", help="Launch the graphical user interface")
     parser.add_argument("-i", "--input", help="Input base wordlist file")
-    parser.add_argument("-o", "--output", default="mangled.rule", help="Output file path (default: mangled.rule)")
-    parser.add_argument("--rules", choices=["simple", "advanced", "extreme"], 
-                       default="advanced", help="Mangling ruleset complexity (default: advanced)")
-    parser.add_argument("--threads", type=int, default=os.cpu_count() or 8,
-                       help=f"Number of worker threads (default: {os.cpu_count() or 8})")
-    parser.add_argument("--max-variations", type=int, default=1000,
-                       help="Maximum variations per word (default: 1000)")
-    parser.add_argument("--targeted", action="store_true",
-                       help="Use interactive profiling for personalized wordlist")
-    parser.add_argument("--hashcat-rules", action="store_true",
-                       help="Generate Hashcat rules instead of wordlist")
-    parser.add_argument("--leak-file", help="Password leak file for ML-based rule learning")
-    parser.add_argument("--gui", action="store_true", help="Launch graphical user interface")
+    parser.add_argument("-o", "--output", required=False, help="Output file path (required in CLI mode)")
+    parser.add_argument("--leak", dest="leak_path", help="Leak file or directory for ML training")
+    parser.add_argument("--rules", choices=["simple", "advanced", "extreme"], default="advanced")
+    parser.add_argument("--threads", type=int, default=os.cpu_count() or 8)
+    parser.add_argument("--max-variations", type=int, default=1000)
+    parser.add_argument("--targeted", action="store_true")
+    parser.add_argument("--hashcat-rules", action="store_true")
     
     args = parser.parse_args()
 
-    # GUI mode
     if args.gui:
-        logging.info("Starting GUI mode...")
         root = tk.Tk()
-        app = ManglerGUI(root)
+        ManglerGUI(root)
         root.mainloop()
-        return
-
-    # CLI mode - validate required arguments
-    if not args.output:
-        parser.error("the following arguments are required: -o/--output")
-
-    # CLI mode
-    try:
-        logging.info("=" * 70)
-        logging.info("Password Mangler 2026 - ML Enhanced")
-        logging.info("=" * 70)
+    else:
+        if not args.output:
+            parser.error("--output is required in CLI mode")
         
         success = mangler_process.parse_file(
             input_file=args.input,
@@ -435,26 +413,11 @@ Examples:
             max_variations=args.max_variations,
             targeted=args.targeted,
             hashcat_rules=args.hashcat_rules,
-            leak_file=args.leak_file
+            leak_path=args.leak_path,
+            progress_callback=lambda t, c: logging.info(c) if t == "status" else None
         )
         
-        if success:
-            logging.info("=" * 70)
-            logging.info("SUCCESS! Operation completed successfully")
-            logging.info("=" * 70)
-            sys.exit(0)
-        else:
-            logging.error("=" * 70)
-            logging.error("FAILED! Operation did not complete successfully")
-            logging.error("=" * 70)
-            sys.exit(1)
-            
-    except KeyboardInterrupt:
-        logging.warning("\nInterrupted by user")
-        sys.exit(130)
-    except Exception as e:
-        logging.error(f"Fatal error: {e}", exc_info=True)
-        sys.exit(1)
+        sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":

@@ -260,14 +260,11 @@ def apply_appends(word, max_appends=30):
 
 
 def apply_prepends(word, max_prepends=15):
-    """Generate variations with prepended prefixes (Hashcat-compatible)."""
+    """Generate Hashcat-compatible prepend rules (prefix appears in forward order)."""
     if not word:
         return
     
-    all_prefixes = list(set(
-        common_prefixes[:10] +  # Example common prefixes
-        learned_prefixes[:10]   # Learned prefixes from ML
-    ))
+    all_prefixes = list(set(common_prefixes[:10] + learned_prefixes[:10]))
     
     seen = set()
     count = 0
@@ -276,7 +273,7 @@ def apply_prepends(word, max_prepends=15):
         if count >= max_prepends:
             break
 
-        # Generate Hashcat-compatible prepend rules (^3^2^1 for prefix "123")
+        # Reverse the prefix so that ^3^2^1 results in "123" at the front
         rule_sequence = "".join(f"^{char}" for char in reversed(prefix))
 
         if rule_sequence not in seen:

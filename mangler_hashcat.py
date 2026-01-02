@@ -40,29 +40,21 @@ def generate_hashcat_rules(output_file, ruleset="advanced"):
     
     if ruleset in ["advanced", "extreme"]:
         # Append rules
-        all_appends = (
-            mangler_core.common_suffixes[:30] +
-            mangler_core.learned_appends[:20]
-        )
-        
+        # Append rules - per-character
+        all_appends = mangler_core.common_suffixes[:30] + mangler_core.learned_appends[:20]
         for suffix in all_appends:
-            # Limit to reasonable lengths for Hashcat
-            if len(suffix) <= 8 and suffix.strip():
-                rules.add(f"${suffix}")  # Append
-                
-                # Character duplication
+            if 1 <= len(suffix) <= 8:
+                rule = "".join(f"${c}" for c in suffix)
+                rules.add(rule)
                 if len(suffix) == 1:
-                    rules.add(f"${suffix}${suffix}")  # Double append
-        
-        # Prepend rules
-        all_prepends = (
-            mangler_core.common_prefixes[:15] +
-            mangler_core.learned_prefixes[:15]
-        )
-        
+                    rules.add(f"${suffix}${suffix}")  # double common chars
+
+        # Prepend rules - per-character, reversed order
+        all_prepends = mangler_core.common_prefixes[:15] + mangler_core.learned_prefixes[:15]
         for prefix in all_prepends:
-            if len(prefix) <= 6 and prefix.strip():
-                rules.add(f"^{prefix[::-1]}")  # Prepend (reversed for Hashcat)
+            if 1 <= len(prefix) <= 6:
+                rule = "".join(f"^{c}" for c in reversed(prefix))
+                rules.add(rule)
         
         # Delete rules
         rules.add("d")  # Duplicate entire word
