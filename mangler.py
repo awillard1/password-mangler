@@ -51,7 +51,7 @@ class ManglerGUI:
         self.threads = tk.IntVar(value=os.cpu_count() or 8)
         self.max_vars = tk.IntVar(value=1000)
         self.targeted = tk.BooleanVar()
-        self.hashcat_rules = tk.BooleanVar()
+        self.hashcat_rules = tk.BooleanVar(value=True)  # Default changed to True
 
         self.task_queue = queue.Queue()
         self.stop_event = threading.Event()
@@ -65,7 +65,7 @@ class ManglerGUI:
         title_frame.pack(fill="x", pady=5)
         title_label = ttk.Label(
             title_frame, 
-            text="Password Mangler,
+            text="Password Mangler",
             font=("Helvetica", 14, "bold")
         )
         title_label.pack()
@@ -197,7 +197,7 @@ class ManglerGUI:
     def browse_input(self):
         file = filedialog.askopenfilename(
             title="Select Input Wordlist",
-            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+            filetypes=[["Text Files", "*.txt"], ["All Files", "*.*"]]
         )
         if file:
             self.input_file.set(file)
@@ -205,7 +205,7 @@ class ManglerGUI:
     def browse_leak(self):
         file = filedialog.askopenfilename(
             title="Select Leak File for ML",
-            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+            filetypes=[["Text Files", "*.txt"], ["All Files", "*.*"]]
         )
         if file:
             self.leak_file.set(file)
@@ -214,7 +214,7 @@ class ManglerGUI:
         file = filedialog.asksaveasfilename(
             title="Save Output As",
             defaultextension=".txt",
-            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+            filetypes=[["Text Files", "*.txt"], ["All Files", "*.*"]]
         )
         if file:
             self.output_file.set(file)
@@ -229,8 +229,8 @@ class ManglerGUI:
                 messagebox.showerror("Error", "Provide input file or enable targeted/hashcat mode.")
                 return
             if not self.output_file.get():
-                messagebox.showerror("Error", "Select output file.")
-                return
+                # Default output file name for hashcat rules
+                self.output_file.set("mangled.rule")
 
             # UI updates
             self.start_btn.config(state="disabled")
@@ -393,7 +393,7 @@ Examples:
     )
     
     parser.add_argument("-i", "--input", help="Input base wordlist file")
-    parser.add_argument("-o", "--output", help="Output file path (required for CLI mode)")
+    parser.add_argument("-o", "--output", default="mangled.rule", help="Output file path (default: mangled.rule)")
     parser.add_argument("--rules", choices=["simple", "advanced", "extreme"], 
                        default="advanced", help="Mangling ruleset complexity (default: advanced)")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 8,

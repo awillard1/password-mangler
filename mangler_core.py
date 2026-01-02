@@ -230,7 +230,7 @@ def apply_phonetic(word):
 
 
 def apply_appends(word, max_appends=30):
-    """Generate variations with appended suffixes."""
+    """Generate variations with appended suffixes (Hashcat-compatible)."""
     if not word:
         return
     
@@ -248,44 +248,40 @@ def apply_appends(word, max_appends=30):
     for suffix in all_suffixes:
         if count >= max_appends:
             break
-            
-        cand = word + suffix
-        if cand not in seen:
-            seen.add(cand)
-            yield cand
-            count += 1
+
+        # Generate Hashcat-compatible append rules ($1$2$3 for suffix "123")
+        rule_sequence = "".join(f"${char}" for char in suffix)
         
-        # Double/triple for short suffixes
-        if len(suffix) <= 2 and count < max_appends:
-            for mult in [2, 3]:
-                cand2 = word + suffix * mult
-                if cand2 not in seen:
-                    seen.add(cand2)
-                    yield cand2
-                    count += 1
+        # Check if this rule sequence is unique
+        if rule_sequence not in seen:
+            seen.add(rule_sequence)
+            yield rule_sequence
+            count += 1
 
 
 def apply_prepends(word, max_prepends=15):
-    """Generate variations with prepended prefixes."""
+    """Generate variations with prepended prefixes (Hashcat-compatible)."""
     if not word:
         return
     
     all_prefixes = list(set(
-        common_prefixes[:10] +
-        learned_prefixes[:10]
+        common_prefixes[:10] +  # Example common prefixes
+        learned_prefixes[:10]   # Learned prefixes from ML
     ))
     
     seen = set()
     count = 0
-    
+
     for prefix in all_prefixes:
         if count >= max_prepends:
             break
-            
-        cand = prefix + word
-        if cand not in seen:
-            seen.add(cand)
-            yield cand
+
+        # Generate Hashcat-compatible prepend rules (^3^2^1 for prefix "123")
+        rule_sequence = "".join(f"^{char}" for char in reversed(prefix))
+
+        if rule_sequence not in seen:
+            seen.add(rule_sequence)
+            yield rule_sequence
             count += 1
 
 
