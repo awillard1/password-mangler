@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ultimate Password Mangler 2026 - ML Enhanced
+Password Mangler 2026 - ML Enhanced
 Refactored and optimized for performance and maintainability.
 
 This tool generates advanced password variations for authorized security testing.
@@ -40,7 +40,7 @@ logging.warning("⚠️  This tool is for authorized penetration testing and sec
 class ManglerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Ultimate Password Mangler 2026 - ML Enhanced (Refactored)")
+        self.root.title("Password Mangler 2026 - ML Enhanced (Refactored)")
         self.root.geometry("1000x800")
         self.root.minsize(900, 700)
 
@@ -65,13 +65,13 @@ class ManglerGUI:
         title_frame.pack(fill="x", pady=5)
         title_label = ttk.Label(
             title_frame, 
-            text="🔐 Password Mangler - Best-in-Class Transformations",
+            text="Password Mangler,
             font=("Helvetica", 14, "bold")
         )
         title_label.pack()
 
         # Settings
-        controls = ttk.LabelFrame(main_frame, text="⚙️ Configuration", padding="10")
+        controls = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
         controls.pack(fill="x", pady=10)
 
         row = 0
@@ -288,7 +288,7 @@ class ManglerGUI:
                         word, self.ruleset.get(), max_per_word=20
                     ))
                     for v in variations[:15]:
-                        preview_samples.append(f"{word} → {v}")
+                        preview_samples.append(f"{word} --> {v}")
                 
                 if preview_samples:
                     self.task_queue.put(("preview", "\n".join(preview_samples)))
@@ -307,11 +307,11 @@ class ManglerGUI:
             )
 
             if success and not self.stop_event.is_set():
-                self.task_queue.put(("done", "✅ Mangling complete! Check your output file."))
+                self.task_queue.put(("done", "Mangling complete! Check your output file."))
             elif self.stop_event.is_set():
-                self.task_queue.put(("error", "⚠️ Processing stopped by user"))
+                self.task_queue.put(("error", "Processing stopped by user"))
             else:
-                self.task_queue.put(("error", "❌ Processing failed"))
+                self.task_queue.put(("error", "Processing failed"))
 
         except Exception as e:
             logging.error(f"Processing error: {e}")
@@ -345,7 +345,7 @@ class ManglerGUI:
                     self.preview_text.see(tk.END)
                     
                 elif typ == "done":
-                    self.status_label.config(text="✅ Completed!", foreground="green")
+                    self.status_label.config(text="Completed!", foreground="green")
                     self.start_btn.config(state="normal")
                     self.stop_btn.config(state="disabled")
                     self.progress["value"] = 100
@@ -353,7 +353,7 @@ class ManglerGUI:
                     return
                     
                 elif typ == "error":
-                    self.status_label.config(text="❌ Error", foreground="red")
+                    self.status_label.config(text="Error", foreground="red")
                     messagebox.showerror("Error", content)
                     self.start_btn.config(state="normal")
                     self.stop_btn.config(state="disabled")
@@ -371,7 +371,7 @@ class ManglerGUI:
 def main():
     """Main entry point for CLI and GUI modes."""
     parser = argparse.ArgumentParser(
-        description="Ultimate Password Mangler 2026 with ML Rule Induction - Best-in-Class Transformations",
+        description="Password Mangler 2026 with ML Rule Induction",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -424,7 +424,7 @@ Examples:
     # CLI mode
     try:
         logging.info("=" * 70)
-        logging.info("🔐 Ultimate Password Mangler 2026 - ML Enhanced")
+        logging.info("Password Mangler 2026 - ML Enhanced")
         logging.info("=" * 70)
         
         success = mangler_process.parse_file(
@@ -440,20 +440,20 @@ Examples:
         
         if success:
             logging.info("=" * 70)
-            logging.info("✅ SUCCESS! Operation completed successfully")
+            logging.info("SUCCESS! Operation completed successfully")
             logging.info("=" * 70)
             sys.exit(0)
         else:
             logging.error("=" * 70)
-            logging.error("❌ FAILED! Operation did not complete successfully")
+            logging.error("FAILED! Operation did not complete successfully")
             logging.error("=" * 70)
             sys.exit(1)
             
     except KeyboardInterrupt:
-        logging.warning("\n⚠️  Interrupted by user")
+        logging.warning("\nInterrupted by user")
         sys.exit(130)
     except Exception as e:
-        logging.error(f"❌ Fatal error: {e}", exc_info=True)
+        logging.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
 
 
