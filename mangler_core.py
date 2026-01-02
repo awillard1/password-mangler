@@ -62,6 +62,9 @@ common_suffixes = [
     # Common patterns
     "qwerty", "qwert", "admin", "password", "pass", "letmein", "welcome",
     "love", "baby", "princess", "master", "test", "root",
+    
+    # Gaming/Internet culture
+    "pro", "noob", "pwn", "ftw", "gg", "ez", "xD", "lol",
 ]
 
 # Common prefixes
