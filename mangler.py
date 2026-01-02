@@ -393,7 +393,7 @@ Examples:
     )
     
     parser.add_argument("-i", "--input", help="Input base wordlist file")
-    parser.add_argument("-o", "--output", required=True, help="Output file path")
+    parser.add_argument("-o", "--output", help="Output file path (required for CLI mode)")
     parser.add_argument("--rules", choices=["simple", "advanced", "extreme"], 
                        default="advanced", help="Mangling ruleset complexity (default: advanced)")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 8,
@@ -416,6 +416,10 @@ Examples:
         app = ManglerGUI(root)
         root.mainloop()
         return
+
+    # CLI mode - validate required arguments
+    if not args.output:
+        parser.error("the following arguments are required: -o/--output")
 
     # CLI mode
     try:
