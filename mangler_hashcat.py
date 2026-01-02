@@ -64,7 +64,7 @@ def generate_hashcat_rules(output_file, ruleset="advanced"):
             if len(prefix) <= 6 and prefix.strip():
                 rules.add(f"^{prefix[::-1]}")  # Prepend (reversed for Hashcat)
         
-        # Duplication rules
+        # Delete rules
         rules.add("d")  # Duplicate entire word
         rules.add("f")  # Duplicate entire word reversed
         rules.add("r")  # Reverse
@@ -72,8 +72,8 @@ def generate_hashcat_rules(output_file, ruleset="advanced"):
         # Character manipulation
         for i in range(5):
             rules.add(f"D{i}")  # Delete at position
-            rules.add(f"[")     # Delete first char
-            rules.add(f"]")     # Delete last char
+            rules.add("[")     # Delete first char
+            rules.add("]")     # Delete last char
         
         # Insert rules (common special chars)
         for pos in range(4):

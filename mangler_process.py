@@ -160,7 +160,9 @@ def parse_file(input_file=None, output_file=None, ruleset="advanced",
     logging.info(f"[Main] Processing {len(base_words)} base words with ruleset '{ruleset}'")
     
     # Step 4: Create output directory if needed
-    os.makedirs(os.path.dirname(output_file) if os.path.dirname(output_file) else ".", exist_ok=True)
+    output_dir = os.path.dirname(output_file)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     
     # Step 5: Process words with multi-threading
     temp_filename = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False).name

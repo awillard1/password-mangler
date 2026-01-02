@@ -429,7 +429,7 @@ def generate_variations(word, ruleset="advanced", max_per_word=1000):
     
     # Always force some critical high-value patterns
     for suffix in ["123", "!", "!!", str(current_year), str(current_year)[-2:], 
-                   str(current_year-1)[-2:], "1234", "@", "2025"]:
+                   str(current_year-1)[-2:], "1234", "@"]:
         for base in [word, word.capitalize(), word.lower()]:
             if yield_unique(base + suffix):
                 yield base + suffix
