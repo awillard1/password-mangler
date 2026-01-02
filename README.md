@@ -1,4 +1,4 @@
-# Ultimate Password Mangler 2026 - ML Enhanced
+# Password Mangler 2026 - ML Enhanced
 
 A powerful, optimized password wordlist generator with ML-based rule induction for penetration testing and security research.
 
