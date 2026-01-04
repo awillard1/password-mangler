@@ -155,8 +155,88 @@ def _save_cached_patterns(cache_path, patterns):
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump(patterns, f, indent=2)
             logging.info(f"[ML] Saved patterns to cache: {cache_path}")
+        
+        # Also write human-readable report
+        report_path = cache_path.replace('.json', '_report.txt')
+        _write_ml_patterns_report(report_path, patterns)
+        
     except Exception as e:
         logging.warning(f"[ML] Failed to save cache: {e}")
+
+
+def _write_ml_patterns_report(report_path, patterns):
+    """Write human-readable ML patterns report."""
+    try:
+        from datetime import datetime
+        
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("="*70 + "\n")
+            f.write("ML PATTERN LEARNING REPORT\n")
+            f.write("="*70 + "\n\n")
+            
+            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            if 'source_file' in patterns:
+                f.write(f"Source: {patterns['source_file']}\n")
+            f.write(f"Analysis Method: {patterns.get('ml_model', 'counter')}\n\n")
+            
+            # Learned patterns summary
+            f.write("LEARNED PATTERNS SUMMARY\n")
+            f.write("-"*70 + "\n")
+            
+            appends = patterns.get('appends', {})
+            prepends = patterns.get('prepends', {})
+            leet = patterns.get('leet', {})
+            
+            f.write(f"  Append patterns:  {len(appends)}\n")
+            f.write(f"  Prepend patterns: {len(prepends)}\n")
+            f.write(f"  Leet substitutions: {len(leet)}\n\n")
+            
+            # Top appends
+            if appends:
+                f.write("TOP 20 APPEND PATTERNS (most common)\n")
+                f.write("-"*70 + "\n")
+                sorted_appends = sorted(appends.items(), key=lambda x: x[1], reverse=True)[:20]
+                for pattern, count in sorted_appends:
+                    f.write(f"  '{pattern:15s}' - {count:,} occurrences\n")
+                f.write("\n")
+            
+            # Top prepends
+            if prepends:
+                f.write("TOP 10 PREPEND PATTERNS (most common)\n")
+                f.write("-"*70 + "\n")
+                sorted_prepends = sorted(prepends.items(), key=lambda x: x[1], reverse=True)[:10]
+                for pattern, count in sorted_prepends:
+                    f.write(f"  '{pattern:15s}' - {count:,} occurrences\n")
+                f.write("\n")
+            
+            # Leet substitutions
+            if leet:
+                f.write("LEET SPEAK SUBSTITUTIONS (discovered)\n")
+                f.write("-"*70 + "\n")
+                sorted_leet = sorted(leet.items(), key=lambda x: x[1], reverse=True)
+                for substitution, count in sorted_leet:
+                    if ' → ' in substitution:
+                        f.write(f"  {substitution:15s} - {count:,} occurrences\n")
+                f.write("\n")
+            
+            # Additional metadata
+            if 'cache_time' in patterns:
+                f.write("CACHE INFORMATION\n")
+                f.write("-"*70 + "\n")
+                f.write(f"  Cache created: {patterns['cache_time']}\n")
+                if 'file_mtime' in patterns:
+                    f.write(f"  Source modified: {patterns['file_mtime']}\n")
+                f.write("\n")
+            
+            f.write("="*70 + "\n")
+            f.write("This report shows patterns learned from leak file analysis.\n")
+            f.write("Patterns are automatically applied to base words during generation.\n")
+            f.write("="*70 + "\n")
+        
+        logging.info(f"[ML] Wrote patterns report to {report_path}")
+        
+    except Exception as e:
+        logging.warning(f"[ML] Could not write patterns report: {e}")
 
 
 def analyze_leak_with_ml(leak_file, sample_size=50000, streaming=True, 
