@@ -319,7 +319,9 @@ def main():
     print("PASSWORD MANGLER - COMPREHENSIVE FUNCTIONALITY VERIFICATION")
     print("="*70)
     
-    os.chdir('/home/runner/work/password-mangler/password-mangler')
+    # Change to repository directory
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(repo_dir)
     
     results = []
     

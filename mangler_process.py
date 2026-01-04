@@ -11,12 +11,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Optional progress bar
 try:
-    from tqdm import tqdm
+    from tqdm import tqdm as _tqdm
     TQDM_AVAILABLE = True
+    
+    def tqdm(iterable, **kwargs):
+        """Wrapper to preserve tqdm functionality when available."""
+        return _tqdm(iterable, **kwargs)
+        
 except ImportError:
     TQDM_AVAILABLE = False
-    # Simple fallback
-    def tqdm(iterable, **kwargs):
+    
+    def tqdm(iterable, desc=None, total=None, disable=False, **kwargs):
+        """Simple fallback that preserves basic parameters."""
+        if not disable and desc:
+            logging.info(f"[Progress] {desc}")
         return iterable
 
 import mangler_core

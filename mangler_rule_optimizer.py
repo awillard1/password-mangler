@@ -31,8 +31,10 @@ def test_rule_on_words(rule: str, test_words: List[str]) -> Set[str]:
             output = apply_simple_rule(word, rule)
             if output:
                 results.add(output)
-        except:
-            pass  # Skip rules we can't parse
+        except Exception as e:
+            # Skip rules we can't parse, but log for debugging
+            logging.debug(f"Failed to apply rule '{rule}' to '{word}': {e}")
+            pass
     
     return results
 
@@ -206,6 +208,7 @@ def optimize_rules(rules: List[str], test_words: List[str] = None,
     # Test each rule and collect outputs
     rule_outputs = {}
     output_to_rules = defaultdict(list)
+    failed_rules_counter = 0
     
     for i, rule in enumerate(rules):
         if verbose and i % 100 == 0:
@@ -219,9 +222,11 @@ def optimize_rules(rules: List[str], test_words: List[str] = None,
             output_to_rules[outputs_tuple].append(rule)
         except Exception as e:
             logging.debug(f"[RuleOptimizer] Failed to test rule '{rule}': {e}")
-            # Keep rules we can't test
-            rule_outputs[rule] = (f"UNIQUE_{i}",)
-            output_to_rules[(f"UNIQUE_{i}",)].append(rule)
+            # Keep rules we can't test with unique identifier
+            failed_rules_counter += 1
+            unique_key = (f"FAILED_RULE_{failed_rules_counter}",)
+            rule_outputs[rule] = unique_key
+            output_to_rules[unique_key].append(rule)
     
     # Find redundant rules
     optimized = []
