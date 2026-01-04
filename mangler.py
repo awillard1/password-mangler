@@ -27,6 +27,8 @@ import mangler_ml
 import mangler_hashcat
 import mangler_process
 import mangler_analyzer
+import mangler_mask
+import mangler_policy
 
 # ===========================
 # ETHICAL WARNING & LOGGING
@@ -413,6 +415,36 @@ Examples:
     parser.add_argument("--max-rules", type=int, default=1000,
                        help="Maximum number of rules to generate (default: 1000)")
     
+    # Mask attack options
+    parser.add_argument("--mask", metavar="PATTERN",
+                       help="Generate passwords from mask (e.g., ?l?l?l?d?d?d)")
+    parser.add_argument("--mask-hybrid", metavar="PATTERN",
+                       help="Hybrid attack: base words + mask pattern")
+    parser.add_argument("--mask-position", choices=['append', 'prepend'], default='append',
+                       help="Position for hybrid mask attack")
+    parser.add_argument("--estimate-mask", metavar="PATTERN",
+                       help="Estimate number of passwords from mask pattern")
+    
+    # Policy filtering options
+    parser.add_argument("--policy", choices=['basic', 'moderate', 'strong', 'enterprise'],
+                       help="Apply common password policy filter")
+    parser.add_argument("--min-length", type=int,
+                       help="Minimum password length")
+    parser.add_argument("--max-length", type=int,
+                       help="Maximum password length")
+    parser.add_argument("--require-lowercase", action="store_true",
+                       help="Require at least one lowercase letter")
+    parser.add_argument("--require-uppercase", action="store_true",
+                       help="Require at least one uppercase letter")
+    parser.add_argument("--require-digit", action="store_true",
+                       help="Require at least one digit")
+    parser.add_argument("--require-special", action="store_true",
+                       help="Require at least one special character")
+    parser.add_argument("--blacklist", metavar="WORDS",
+                       help="Comma-separated list of blacklisted words")
+    parser.add_argument("--filter-file", metavar="INPUT",
+                       help="Filter existing wordlist file by policy")
+    
     args = parser.parse_args()
 
     if args.gui:
@@ -425,6 +457,67 @@ Examples:
         root = tk.Tk()
         ManglerGUI(root)
         root.mainloop()
+    
+    elif args.estimate_mask:
+        # Estimate mask size
+        size = mangler_mask.estimate_mask_size(args.estimate_mask)
+        logging.info(f"Mask pattern: {args.estimate_mask}")
+        logging.info(f"Estimated passwords: {size:,}")
+        sys.exit(0)
+    
+    elif args.mask:
+        # Mask attack mode
+        if not args.output:
+            logging.error("Output file required for mask mode (-o/--output)")
+            sys.exit(1)
+        
+        logging.info(f"Mask attack: {args.mask}")
+        count = mangler_mask.generate_mask_file(
+            mask=args.mask,
+            output_file=args.output,
+            max_passwords=args.max_variations if args.max_variations != 1000 else None
+        )
+        
+        if count > 0:
+            logging.info(f"SUCCESS! Generated {count:,} passwords")
+            sys.exit(0)
+        else:
+            logging.error("Mask generation failed")
+            sys.exit(1)
+    
+    elif args.filter_file:
+        # Policy filtering mode
+        if not args.output:
+            logging.error("Output file required for filter mode (-o/--output)")
+            sys.exit(1)
+        
+        # Build policy
+        if args.policy:
+            policy = mangler_policy.create_common_policy(args.policy)
+        else:
+            policy = mangler_policy.PasswordPolicy(
+                min_length=args.min_length or 0,
+                max_length=args.max_length or 128,
+                require_lowercase=args.require_lowercase,
+                require_uppercase=args.require_uppercase,
+                require_digit=args.require_digit,
+                require_special=args.require_special,
+                blacklist_words=args.blacklist.split(',') if args.blacklist else None
+            )
+        
+        count = mangler_policy.filter_file_by_policy(
+            input_file=args.filter_file,
+            output_file=args.output,
+            policy=policy
+        )
+        
+        if count > 0:
+            logging.info(f"SUCCESS! Filtered {count:,} passwords")
+            sys.exit(0)
+        else:
+            logging.error("Filtering produced no results")
+            sys.exit(1)
+    
     elif args.analyze:
         # Analysis mode: generate high-quality rules from wordlist
         if not args.output:
