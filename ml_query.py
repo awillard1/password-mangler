@@ -331,6 +331,142 @@ def batch_query(input_file: str, output_file: str, cache_hash: str,
         sys.exit(1)
 
 
+def compare_caches(cache_hashes: list):
+    """Compare two ML pattern caches."""
+    try:
+        print_banner()
+        
+        if len(cache_hashes) != 2:
+            logging.error("Comparison requires exactly 2 cache hashes")
+            sys.exit(1)
+        
+        # Load both caches
+        logging.info("Loading caches for comparison...")
+        patterns1 = mangler_ml_query.load_ml_patterns(cache_hash=cache_hashes[0])
+        patterns2 = mangler_ml_query.load_ml_patterns(cache_hash=cache_hashes[1])
+        
+        print(f"Comparing Pattern Caches:\n")
+        print(f"Cache 1: {patterns1.get('source_file', 'Unknown')} ({cache_hashes[0]})")
+        print(f"Cache 2: {patterns2.get('source_file', 'Unknown')} ({cache_hashes[1]})")
+        print("=" * 70 + "\n")
+        
+        # Perform comparison
+        comparison = mangler_ml_query.compare_ml_patterns(patterns1, patterns2)
+        
+        # Show similarity
+        sim_score = comparison['stats']['similarity_score']
+        print(f"Similarity Score: {sim_score:.1%}")
+        print(f"Common Patterns: {comparison['stats']['total_common']}")
+        print(f"Unique to Cache 1: {comparison['stats']['total_unique_to_1']}")
+        print(f"Unique to Cache 2: {comparison['stats']['total_unique_to_2']}")
+        print()
+        
+        # Show unique patterns for cache 1
+        print(f"TOP UNIQUE PATTERNS IN CACHE 1:")
+        print("-" * 70)
+        for pattern_type in ['appends', 'prepends', 'leet']:
+            patterns = comparison['unique_to_1'][pattern_type]
+            if patterns:
+                sorted_patterns = sorted(patterns.items(), key=lambda x: x[1], reverse=True)[:10]
+                print(f"\n  {pattern_type.upper()}:")
+                for pattern, count in sorted_patterns:
+                    print(f"    '{pattern}' - {count:,} occurrences")
+        print()
+        
+        # Show unique patterns for cache 2
+        print(f"TOP UNIQUE PATTERNS IN CACHE 2:")
+        print("-" * 70)
+        for pattern_type in ['appends', 'prepends', 'leet']:
+            patterns = comparison['unique_to_2'][pattern_type]
+            if patterns:
+                sorted_patterns = sorted(patterns.items(), key=lambda x: x[1], reverse=True)[:10]
+                print(f"\n  {pattern_type.upper()}:")
+                for pattern, count in sorted_patterns:
+                    print(f"    '{pattern}' - {count:,} occurrences")
+        print()
+        
+        # Show common patterns with frequency diff
+        print(f"TOP COMMON PATTERNS (Frequency Comparison):")
+        print("-" * 70)
+        for pattern_type in ['appends', 'prepends', 'leet']:
+            patterns = comparison['common'][pattern_type]
+            if patterns:
+                # Sort by max frequency
+                sorted_patterns = sorted(
+                    patterns.items(), 
+                    key=lambda x: max(x[1]['count1'], x[1]['count2']), 
+                    reverse=True
+                )[:10]
+                print(f"\n  {pattern_type.upper()}:")
+                for pattern, counts in sorted_patterns:
+                    c1 = counts['count1']
+                    c2 = counts['count2']
+                    diff = abs(c1 - c2)
+                    print(f"    '{pattern}' - Cache1: {c1:,} | Cache2: {c2:,} (diff: {diff:,})")
+        print()
+        
+    except Exception as e:
+        logging.error(f"Comparison failed: {e}")
+        sys.exit(1)
+
+
+def find_intersections(cache_hashes: list):
+    """Find patterns common to ALL specified caches."""
+    try:
+        print_banner()
+        
+        logging.info(f"Finding patterns common to {len(cache_hashes)} caches...")
+        
+        # Load all caches
+        pattern_list = []
+        for cache_hash in cache_hashes:
+            patterns = mangler_ml_query.load_ml_patterns(cache_hash=cache_hash.strip())
+            pattern_list.append(patterns)
+            logging.info(f"  Loaded: {patterns.get('source_file', 'Unknown')}")
+        
+        print()
+        
+        # Find intersections
+        result = mangler_ml_query.find_pattern_intersections(pattern_list)
+        
+        print(f"PATTERNS COMMON TO ALL {len(cache_hashes)} CACHES:")
+        print("=" * 70 + "\n")
+        
+        # Show sources
+        print("Sources:")
+        for i, source in enumerate(result['sources'], 1):
+            print(f"  {i}. {source}")
+        print()
+        
+        # Show common patterns
+        total_common = sum(len(v) for v in result['common_patterns'].values())
+        print(f"Total Common Patterns: {total_common}\n")
+        
+        for pattern_type in ['appends', 'prepends', 'leet']:
+            patterns = result['common_patterns'][pattern_type]
+            if patterns:
+                print(f"{pattern_type.upper()} ({len(patterns)} common):")
+                print("-" * 70)
+                
+                # Sort by average frequency
+                sorted_patterns = sorted(
+                    patterns.items(),
+                    key=lambda x: x[1]['avg'],
+                    reverse=True
+                )
+                
+                for pattern, stats in sorted_patterns[:20]:  # Top 20
+                    avg = stats['avg']
+                    min_val = stats['min']
+                    max_val = stats['max']
+                    print(f"  '{pattern:15s}' - avg: {avg:6.1f} | min: {min_val:5.0f} | max: {max_val:5.0f}")
+                print()
+        
+    except Exception as e:
+        logging.error(f"Intersection search failed: {e}")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ML Pattern Query Tool - Query and reuse learned patterns",
@@ -372,6 +508,10 @@ Examples:
                        help="Export ML patterns as Hashcat rules")
     parser.add_argument("--merge", "-m", metavar="HASHES",
                        help="Merge multiple caches (comma-separated hashes)")
+    parser.add_argument("--compare", metavar="HASHES",
+                       help="Compare two caches (comma-separated, exactly 2)")
+    parser.add_argument("--intersect", metavar="HASHES",
+                       help="Find common patterns across all caches (comma-separated)")
     parser.add_argument("--summary", "-s", action="store_true",
                        help="Show detailed pattern summary")
     parser.add_argument("--cache", "-c", metavar="HASH",
@@ -443,6 +583,18 @@ Examples:
         
         cache_hashes = args.merge.split(',')
         merge_caches(cache_hashes, args.output)
+        return
+    
+    # Compare caches
+    if args.compare:
+        cache_hashes = args.compare.split(',')
+        compare_caches(cache_hashes)
+        return
+    
+    # Find intersections
+    if args.intersect:
+        cache_hashes = args.intersect.split(',')
+        find_intersections(cache_hashes)
         return
     
     # Show summary

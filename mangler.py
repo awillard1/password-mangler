@@ -461,7 +461,30 @@ Examples:
     parser.add_argument("--ml-interactive", action="store_true",
                        help="Interactive ML query mode")
     
+    # Rule optimization
+    parser.add_argument("--optimize-rules", metavar="INPUT",
+                       help="Optimize Hashcat rules file (remove redundant rules)")
+    parser.add_argument("--test-wordlist", metavar="FILE",
+                       help="Test wordlist for rule optimization (optional)")
+    
     args = parser.parse_args()
+
+    # Handle rule optimization
+    if args.optimize_rules:
+        import mangler_rule_optimizer
+        
+        if not args.output:
+            logging.error("Must specify --output for rule optimization")
+            sys.exit(1)
+        
+        logging.info(f"[RuleOptimizer] Optimizing rules from {args.optimize_rules}")
+        stats = mangler_rule_optimizer.optimize_rule_file(
+            args.optimize_rules,
+            args.output,
+            test_wordlist=args.test_wordlist
+        )
+        logging.info(f"[RuleOptimizer] SUCCESS! Reduction: {stats['reduction_percent']}%")
+        sys.exit(0)
 
     if args.list_ml_caches:
         # List all cached ML patterns

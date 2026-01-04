@@ -399,6 +399,126 @@ def suggest_patterns_for_word(word: str, patterns: Dict) -> Dict[str, List]:
     return suggestions
 
 
+def compare_ml_patterns(patterns1: Dict, patterns2: Dict) -> Dict:
+    """
+    Compare two ML pattern dictionaries and find differences.
+    
+    Args:
+        patterns1: First pattern dictionary
+        patterns2: Second pattern dictionary
+    
+    Returns:
+        Dictionary with comparison results
+    """
+    comparison = {
+        'source1': patterns1.get('source_file', 'Unknown'),
+        'source2': patterns2.get('source_file', 'Unknown'),
+        'unique_to_1': {'appends': {}, 'prepends': {}, 'leet': {}},
+        'unique_to_2': {'appends': {}, 'prepends': {}, 'leet': {}},
+        'common': {'appends': {}, 'prepends': {}, 'leet': {}},
+        'stats': {}
+    }
+    
+    # Compare each pattern type
+    for pattern_type in ['appends', 'prepends', 'leet']:
+        set1 = set(patterns1.get(pattern_type, {}).keys())
+        set2 = set(patterns2.get(pattern_type, {}).keys())
+        
+        # Unique to pattern 1
+        unique1 = set1 - set2
+        for key in unique1:
+            comparison['unique_to_1'][pattern_type][key] = patterns1[pattern_type][key]
+        
+        # Unique to pattern 2
+        unique2 = set2 - set1
+        for key in unique2:
+            comparison['unique_to_2'][pattern_type][key] = patterns2[pattern_type][key]
+        
+        # Common (in both)
+        common = set1 & set2
+        for key in common:
+            comparison['common'][pattern_type][key] = {
+                'count1': patterns1[pattern_type][key],
+                'count2': patterns2[pattern_type][key]
+            }
+    
+    # Calculate stats
+    comparison['stats'] = {
+        'total_unique_to_1': sum(len(v) for v in comparison['unique_to_1'].values()),
+        'total_unique_to_2': sum(len(v) for v in comparison['unique_to_2'].values()),
+        'total_common': sum(len(v) for v in comparison['common'].values()),
+        'similarity_score': calculate_pattern_similarity(patterns1, patterns2)
+    }
+    
+    return comparison
+
+
+def calculate_pattern_similarity(patterns1: Dict, patterns2: Dict) -> float:
+    """
+    Calculate similarity score (0-1) between two pattern sets.
+    
+    Uses Jaccard similarity: |intersection| / |union|
+    """
+    all_patterns1 = set()
+    all_patterns2 = set()
+    
+    for pattern_type in ['appends', 'prepends', 'leet']:
+        all_patterns1.update(patterns1.get(pattern_type, {}).keys())
+        all_patterns2.update(patterns2.get(pattern_type, {}).keys())
+    
+    if not all_patterns1 and not all_patterns2:
+        return 1.0
+    
+    intersection = len(all_patterns1 & all_patterns2)
+    union = len(all_patterns1 | all_patterns2)
+    
+    return intersection / union if union > 0 else 0.0
+
+
+def find_pattern_intersections(pattern_list: List[Dict]) -> Dict:
+    """
+    Find patterns that appear in ALL provided pattern dictionaries.
+    
+    Args:
+        pattern_list: List of pattern dictionaries
+    
+    Returns:
+        Dictionary with common patterns across all sources
+    """
+    if not pattern_list:
+        return {}
+    
+    # Start with patterns from first dict
+    common = {
+        'appends': set(pattern_list[0].get('appends', {}).keys()),
+        'prepends': set(pattern_list[0].get('prepends', {}).keys()),
+        'leet': set(pattern_list[0].get('leet', {}).keys())
+    }
+    
+    # Intersect with all other pattern dicts
+    for patterns in pattern_list[1:]:
+        for pattern_type in ['appends', 'prepends', 'leet']:
+            common[pattern_type] &= set(patterns.get(pattern_type, {}).keys())
+    
+    # Build result with counts from each source
+    result = {
+        'sources': [p.get('source_file', 'Unknown') for p in pattern_list],
+        'common_patterns': {'appends': {}, 'prepends': {}, 'leet': {}}
+    }
+    
+    for pattern_type in ['appends', 'prepends', 'leet']:
+        for pattern in common[pattern_type]:
+            counts = [p[pattern_type][pattern] for p in pattern_list]
+            result['common_patterns'][pattern_type][pattern] = {
+                'counts': counts,
+                'avg': sum(counts) / len(counts),
+                'min': min(counts),
+                'max': max(counts)
+            }
+    
+    return result
+
+
 def merge_ml_patterns(pattern_list: List[Dict]) -> Dict:
     """
     Merge multiple ML pattern dictionaries into one.

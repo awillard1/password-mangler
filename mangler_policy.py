@@ -273,6 +273,10 @@ def create_common_policy(policy_type: str) -> PasswordPolicy:
         raise ValueError(f"Unknown policy type: {policy_type}")
 
 
+# Alias for backward compatibility and clearer naming
+get_preset_policy = create_common_policy
+
+
 def filter_file_by_policy(input_file: str, output_file: str, 
                          policy: PasswordPolicy) -> int:
     """

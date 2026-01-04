@@ -8,7 +8,16 @@ import tempfile
 import subprocess
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
+
+# Optional progress bar
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    # Simple fallback
+    def tqdm(iterable, **kwargs):
+        return iterable
 
 import mangler_core
 import mangler_ml

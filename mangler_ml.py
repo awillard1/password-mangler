@@ -16,8 +16,16 @@ import os
 import json
 import hashlib
 import random
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.cluster import MiniBatchKMeans
+
+# Optional ML dependencies
+try:
+    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.cluster import MiniBatchKMeans
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    logging.warning("sklearn not available. ML clustering disabled. Install with: pip install scikit-learn")
+
 import mangler_core
 
 
@@ -583,6 +591,10 @@ def _perform_clustering_analysis(passwords, n_clusters=15):
     Uses MiniBatchKMeans for efficiency with large datasets.
     Only called on moderate-sized samples to avoid memory issues.
     """
+    if not SKLEARN_AVAILABLE:
+        logging.warning("[ML] Clustering analysis skipped - sklearn not available")
+        return
+    
     logging.info("[ML] Performing clustering analysis for pattern discovery...")
     
     try:
