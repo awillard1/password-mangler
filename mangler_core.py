@@ -498,11 +498,92 @@ def analyze_patterns(passwords, top_n=50):
     return top_appends, top_prepends, learned_subs
 
 
+def analyze_patterns_streaming(file_iterator, batch_size=50000, top_n=50):
+    """
+    Streaming version that processes passwords in batches to avoid memory exhaustion.
+    Accepts an iterator that yields (password, source_info) tuples.
+    """
+    append_counter = Counter()
+    prepend_counter = Counter()
+    char_subs = {}
+    total_processed = 0
+    
+    batch = []
+    
+    for pwd in file_iterator:
+        # Handle both string and tuple inputs
+        if isinstance(pwd, tuple):
+            pwd = pwd[0]
+        
+        batch.append(pwd)
+        
+        # Process batch when it reaches batch_size
+        if len(batch) >= batch_size:
+            _process_batch(batch, append_counter, prepend_counter, char_subs)
+            total_processed += len(batch)
+            batch = []
+            logging.info(f"[ML] Processed {total_processed:,} passwords so far...")
+    
+    # Process remaining batch
+    if batch:
+        _process_batch(batch, append_counter, prepend_counter, char_subs)
+        total_processed += len(batch)
+    
+    logging.info(f"[ML] Streaming analysis complete. Total processed: {total_processed:,}")
+    
+    # Extract top patterns
+    top_appends = [item[0] for item in append_counter.most_common(top_n)]
+    top_prepends = [item[0] for item in prepend_counter.most_common(top_n)]
+    
+    # Extract meaningful substitutions
+    learned_subs = {}
+    for char, subs in char_subs.items():
+        if len(subs) > 0:
+            top_subs = [s for s, count in subs.most_common(5) if count > 2]
+            if top_subs:
+                learned_subs[char] = top_subs
+    
+    return top_appends, top_prepends, learned_subs
+
+
+def _process_batch(passwords, append_counter, prepend_counter, char_subs):
+    """Helper function to process a batch of passwords."""
+    for pwd in passwords:
+        if len(pwd) < 4:
+            continue
+            
+        # Check various lengths for suffixes and prefixes
+        for length in [1, 2, 3, 4, 5]:
+            if len(pwd) > length:
+                suffix = pwd[-length:]
+                prefix = pwd[:length]
+                
+                # Count numeric or special suffixes
+                if suffix.isdigit() or any(c in suffix for c in special_chars):
+                    append_counter[suffix] += 1
+                
+                # Count numeric or special prefixes
+                if prefix.isdigit() or any(c in prefix for c in special_chars):
+                    prepend_counter[prefix] += 1
+        
+        # Analyze character substitutions (leet patterns)
+        for i, c in enumerate(pwd):
+            if not c.isalpha() and i > 0 and i < len(pwd) - 1:
+                # Check surrounding context
+                context = pwd[max(0, i-1):min(len(pwd), i+2)]
+                for char in context:
+                    if char.isalpha():
+                        if char.lower() not in char_subs:
+                            char_subs[char.lower()] = Counter()
+                        char_subs[char.lower()][c] += 1
+
+
 # Export main functions
 __all__ = [
     'generate_variations',
     'process_word',
     'analyze_patterns',
+    'analyze_patterns_streaming',
     'learned_appends',
     'learned_prefixes',
     'learned_leet',

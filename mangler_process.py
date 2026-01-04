@@ -102,73 +102,69 @@ def parse_file(input_file=None, output_file=None, ruleset="advanced",
         True if successful, False otherwise
     """
     
-    # Step 1: ML Analysis - Now supports directory of leak files
+    # Step 1: ML Analysis - Now supports directory of leak files with streaming
     if leak_path and os.path.exists(leak_path):
         logging.info("[Main] Starting ML-based rule learning...")
         if progress_callback:
             progress_callback("status", "Analyzing leak data with ML...")
 
-        passwords = []
-        sample_limit = None
-
-        if os.path.isdir(leak_path):
-            logging.info(f"[ML] Loading leaks from directory: {leak_path}")
-            files_processed = 0
-            total_passwords_added = 0
-
-            for fname in os.listdir(leak_path):
-                fpath = os.path.join(leak_path, fname)
-                if not os.path.isfile(fpath):
-                    continue
-
-                files_processed += 1
-                logging.info(f"[ML] Reading file {files_processed}: {fpath}")
-
+        def password_iterator():
+            """Generator that yields passwords from files without loading all into memory."""
+            if os.path.isdir(leak_path):
+                logging.info(f"[ML] Streaming analysis of directory: {leak_path}")
+                files_processed = 0
+                
+                for fname in sorted(os.listdir(leak_path)):
+                    fpath = os.path.join(leak_path, fname)
+                    if not os.path.isfile(fpath):
+                        continue
+                    
+                    files_processed += 1
+                    logging.info(f"[ML] Processing file {files_processed}: {fname}")
+                    
+                    try:
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                            for line in f:
+                                pwd = line.strip()
+                                if 4 <= len(pwd) <= 40:
+                                    yield pwd.lower()
+                    except Exception as e:
+                        logging.warning(f"[ML] Failed to read {fpath}: {e}")
+                
+                logging.info(f"[ML] Finished processing directory. Total files: {files_processed}")
+            else:
+                # Single file processing
+                logging.info(f"[ML] Streaming analysis of file: {leak_path}")
                 try:
-                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                        lines_read = 0
+                    with open(leak_path, "r", encoding="utf-8", errors="ignore") as f:
                         for line in f:
                             pwd = line.strip()
                             if 4 <= len(pwd) <= 40:
-                                passwords.append(pwd.lower())
-                                total_passwords_added += 1
-                                lines_read += 1
-
-                                # Only check limit if one is set
-                                if sample_limit is not None and len(passwords) >= sample_limit:
-                                    logging.info(f"[ML] Reached sample limit of {sample_limit:,} passwords after adding {lines_read} from this file.")
-                                    logging.info(f"[ML] Total passwords collected: {len(passwords):,}. Stopping early.")
-                                    break
-
-                        if sample_limit is not None and len(passwords) >= sample_limit:
-                            logging.info(f"[ML] Sample limit reached after {files_processed} files. Skipping remaining files.")
-                            break
-
-                    logging.info(f"[ML] Added {lines_read:,} valid passwords from this file (total so far: {len(passwords):,})")
-
+                                yield pwd.lower()
                 except Exception as e:
-                    logging.warning(f"[ML] Failed to read {fpath}: {e}")
-
-            logging.info(f"[ML] Finished processing directory. Total files read: {files_processed}")
-            logging.info(f"[ML] Total passwords collected for analysis: {len(passwords):,}")
-
-        if passwords:
-            # Use core analysis directly (more efficient than full clustering)
-            top_appends, top_prepends, learned_subs = mangler_core.analyze_patterns(passwords, top_n=50)
-
+                    logging.error(f"[ML] Failed to read leak file: {e}")
+        
+        # Use streaming analysis to process all data without memory exhaustion
+        try:
+            top_appends, top_prepends, learned_subs = mangler_core.analyze_patterns_streaming(
+                password_iterator(), batch_size=50000, top_n=50
+            )
+            
             mangler_core.learned_appends[:] = [a for a in top_appends if a not in mangler_core.common_suffixes and len(a) <= 6]
             mangler_core.learned_prefixes[:] = [p for p in top_prepends if p not in mangler_core.common_prefixes and len(p) <= 6]
-
+            
             for char, subs in learned_subs.items():
                 if char not in mangler_core.learned_leet:
                     mangler_core.learned_leet[char] = []
                 for sub in subs:
                     if sub not in mangler_core.learned_leet[char]:
                         mangler_core.learned_leet[char].append(sub)
-
+            
             logging.info(f"[ML] Learned {len(mangler_core.learned_appends)} appends, {len(mangler_core.learned_prefixes)} prepends")
-        else:
-            logging.warning("[Main] No valid passwords found in leak source")
+        except Exception as e:
+            logging.error(f"[ML] Analysis failed: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Step 2: Hashcat Rules Generation (if requested)
     if hashcat_rules:
