@@ -114,7 +114,7 @@ def parse_file(input_file=None, output_file=None, ruleset="advanced",
                 logging.info(f"[ML] Streaming analysis of directory: {leak_path}")
                 files_processed = 0
                 
-                for fname in sorted(os.listdir(leak_path)):
+                for fname in os.listdir(leak_path):
                     fpath = os.path.join(leak_path, fname)
                     if not os.path.isfile(fpath):
                         continue

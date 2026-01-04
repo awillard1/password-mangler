@@ -501,7 +501,15 @@ def analyze_patterns(passwords, top_n=50):
 def analyze_patterns_streaming(file_iterator, batch_size=50000, top_n=50):
     """
     Streaming version that processes passwords in batches to avoid memory exhaustion.
-    Accepts an iterator that yields (password, source_info) tuples.
+    Accepts an iterator that yields passwords as strings.
+    
+    Args:
+        file_iterator: Iterator that yields password strings
+        batch_size: Number of passwords to process in each batch (default: 50000)
+        top_n: Number of top patterns to return (default: 50)
+    
+    Returns:
+        tuple: (top_appends, top_prepends, learned_subs) same as analyze_patterns
     """
     append_counter = Counter()
     prepend_counter = Counter()
@@ -547,7 +555,20 @@ def analyze_patterns_streaming(file_iterator, batch_size=50000, top_n=50):
 
 
 def _process_batch(passwords, append_counter, prepend_counter, char_subs):
-    """Helper function to process a batch of passwords."""
+    """
+    Helper function to process a batch of passwords and update pattern counters.
+    
+    Analyzes each password for:
+    - Suffix patterns (numeric or special character endings)
+    - Prefix patterns (numeric or special character beginnings)
+    - Character substitutions (leet speak patterns)
+    
+    Args:
+        passwords: List of password strings to analyze
+        append_counter: Counter object for suffix patterns (updated in-place)
+        prepend_counter: Counter object for prefix patterns (updated in-place)
+        char_subs: Dict of Counter objects for char substitutions (updated in-place)
+    """
     for pwd in passwords:
         if len(pwd) < 4:
             continue
