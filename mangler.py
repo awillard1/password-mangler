@@ -9,17 +9,24 @@ This tool generates advanced password variations for authorized security testing
 import argparse
 import os
 import sys
-import tkinter as tk
-from tkinter import filedialog, ttk, messagebox, scrolledtext
 import logging
 import threading
 import queue
+
+# Try to import tkinter (optional for GUI mode)
+try:
+    import tkinter as tk
+    from tkinter import filedialog, ttk, messagebox, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
 
 # Import refactored modules
 import mangler_core
 import mangler_ml
 import mangler_hashcat
 import mangler_process
+import mangler_analyzer
 
 # ===========================
 # ETHICAL WARNING & LOGGING
@@ -399,13 +406,50 @@ Examples:
                        help="Enable expensive ML clustering analysis (slow, minimal benefit)")
     parser.add_argument("--chunk-size", type=int, default=10000,
                        help="Chunk size for streaming large leak files (default: 10000)")
+    parser.add_argument("--analyze", metavar="WORDLIST", 
+                       help="Analyze wordlist and generate high-quality Hashcat rules")
+    parser.add_argument("--base-dict", metavar="FILE",
+                       help="Base dictionary for transformation inference (use with --analyze)")
+    parser.add_argument("--max-rules", type=int, default=1000,
+                       help="Maximum number of rules to generate (default: 1000)")
     
     args = parser.parse_args()
 
     if args.gui:
+        if not TKINTER_AVAILABLE:
+            logging.error("GUI mode requires tkinter, which is not installed")
+            logging.error("Install tkinter: sudo apt-get install python3-tk (Ubuntu/Debian)")
+            logging.error("Or run in CLI mode without --gui flag")
+            sys.exit(1)
+        
         root = tk.Tk()
         ManglerGUI(root)
         root.mainloop()
+    elif args.analyze:
+        # Analysis mode: generate high-quality rules from wordlist
+        if not args.output:
+            args.output = args.analyze.replace('.txt', '_optimized.rule')
+        
+        logging.info(f"Analyzing wordlist: {args.analyze}")
+        logging.info(f"Output rules: {args.output}")
+        
+        result = mangler_analyzer.analyze_and_generate_rules(
+            wordlist_file=args.analyze,
+            output_file=args.output,
+            base_dict_file=args.base_dict,
+            max_rules=args.max_rules,
+            streaming=True,
+            chunk_size=args.chunk_size
+        )
+        
+        if result:
+            logging.info(f"SUCCESS! Generated {len(result['rules'])} high-quality rules")
+            logging.info(f"Rules written to: {result['rules_file']}")
+            logging.info(f"Analysis report: {result['report_file']}")
+            sys.exit(0)
+        else:
+            logging.error("Analysis failed")
+            sys.exit(1)
     else:
         if not args.output:
             parser.error("--output is required in CLI mode")
