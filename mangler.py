@@ -388,12 +388,17 @@ Examples:
     parser.add_argument("--gui", action="store_true", help="Launch the graphical user interface")
     parser.add_argument("-i", "--input", help="Input base wordlist file")
     parser.add_argument("-o", "--output", required=False, help="Output file path (required in CLI mode)")
-    parser.add_argument("--leak", dest="leak_path", help="Leak file or directory for ML training")
+    parser.add_argument("--leak", dest="leak_path", help="Leak file or directory for ML training (optional - enables ML mode)")
     parser.add_argument("--rules", choices=["simple", "advanced", "extreme"], default="advanced")
     parser.add_argument("--threads", type=int, default=os.cpu_count() or 8)
     parser.add_argument("--max-variations", type=int, default=1000)
     parser.add_argument("--targeted", action="store_true")
     parser.add_argument("--hashcat-rules", action="store_true")
+    parser.add_argument("--no-cache", action="store_true", help="Disable ML pattern caching")
+    parser.add_argument("--enable-clustering", action="store_true", 
+                       help="Enable expensive ML clustering analysis (slow, minimal benefit)")
+    parser.add_argument("--chunk-size", type=int, default=10000,
+                       help="Chunk size for streaming large leak files (default: 10000)")
     
     args = parser.parse_args()
 

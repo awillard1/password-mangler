@@ -83,7 +83,8 @@ def interactive_profile():
 
 def parse_file(input_file=None, output_file=None, ruleset="advanced", 
                threads=8, max_variations=1000, targeted=False, 
-               hashcat_rules=False, leak_path=None, progress_callback=None):
+               hashcat_rules=False, leak_path=None, progress_callback=None,
+               use_cache=True, chunk_size=10000):
     """
     Main processing function that orchestrates the mangling operation.
     
@@ -97,78 +98,34 @@ def parse_file(input_file=None, output_file=None, ruleset="advanced",
         hashcat_rules: Generate Hashcat rules instead of wordlist
         leak_path: Password leak file or directory for ML learning
         progress_callback: Optional callback for progress updates (for GUI)
+        use_cache: Use cached ML patterns if available
+        chunk_size: Chunk size for streaming analysis of leak files
     
     Returns:
         True if successful, False otherwise
     """
     
-    # Step 1: ML Analysis - Now supports directory of leak files
+    # Step 1: ML Analysis - Now supports directory of leak files with streaming
     if leak_path and os.path.exists(leak_path):
         logging.info("[Main] Starting ML-based rule learning...")
         if progress_callback:
             progress_callback("status", "Analyzing leak data with ML...")
 
-        passwords = []
-        sample_limit = None
-
         if os.path.isdir(leak_path):
-            logging.info(f"[ML] Loading leaks from directory: {leak_path}")
-            files_processed = 0
-            total_passwords_added = 0
-
-            for fname in os.listdir(leak_path):
-                fpath = os.path.join(leak_path, fname)
-                if not os.path.isfile(fpath):
-                    continue
-
-                files_processed += 1
-                logging.info(f"[ML] Reading file {files_processed}: {fpath}")
-
-                try:
-                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                        lines_read = 0
-                        for line in f:
-                            pwd = line.strip()
-                            if 4 <= len(pwd) <= 40:
-                                passwords.append(pwd.lower())
-                                total_passwords_added += 1
-                                lines_read += 1
-
-                                # Only check limit if one is set
-                                if sample_limit is not None and len(passwords) >= sample_limit:
-                                    logging.info(f"[ML] Reached sample limit of {sample_limit:,} passwords after adding {lines_read} from this file.")
-                                    logging.info(f"[ML] Total passwords collected: {len(passwords):,}. Stopping early.")
-                                    break
-
-                        if sample_limit is not None and len(passwords) >= sample_limit:
-                            logging.info(f"[ML] Sample limit reached after {files_processed} files. Skipping remaining files.")
-                            break
-
-                    logging.info(f"[ML] Added {lines_read:,} valid passwords from this file (total so far: {len(passwords):,})")
-
-                except Exception as e:
-                    logging.warning(f"[ML] Failed to read {fpath}: {e}")
-
-            logging.info(f"[ML] Finished processing directory. Total files read: {files_processed}")
-            logging.info(f"[ML] Total passwords collected for analysis: {len(passwords):,}")
-
-        if passwords:
-            # Use core analysis directly (more efficient than full clustering)
-            top_appends, top_prepends, learned_subs = mangler_core.analyze_patterns(passwords, top_n=50)
-
-            mangler_core.learned_appends[:] = [a for a in top_appends if a not in mangler_core.common_suffixes and len(a) <= 6]
-            mangler_core.learned_prefixes[:] = [p for p in top_prepends if p not in mangler_core.common_prefixes and len(p) <= 6]
-
-            for char, subs in learned_subs.items():
-                if char not in mangler_core.learned_leet:
-                    mangler_core.learned_leet[char] = []
-                for sub in subs:
-                    if sub not in mangler_core.learned_leet[char]:
-                        mangler_core.learned_leet[char].append(sub)
-
-            logging.info(f"[ML] Learned {len(mangler_core.learned_appends)} appends, {len(mangler_core.learned_prefixes)} prepends")
+            # Process directory with streaming for each file
+            success = _analyze_leak_directory_streaming(leak_path, use_cache, chunk_size, progress_callback)
         else:
-            logging.warning("[Main] No valid passwords found in leak source")
+            # Single file - use new streaming API
+            success = mangler_ml.analyze_leak_with_ml(
+                leak_path, 
+                sample_size=None,  # No limit for streaming
+                streaming=True,
+                use_cache=use_cache,
+                chunk_size=chunk_size
+            )
+        
+        if not success:
+            logging.warning("[Main] ML analysis completed with issues, continuing anyway")
     
     # Step 2: Hashcat Rules Generation (if requested)
     if hashcat_rules:
@@ -302,6 +259,86 @@ def parse_file(input_file=None, output_file=None, ruleset="advanced",
                 os.remove(temp_filename)
             except:
                 pass
+
+
+def _analyze_leak_directory_streaming(leak_dir, use_cache, chunk_size, progress_callback):
+    """
+    Analyze directory of leak files using streaming approach.
+    Processes files one at a time to avoid loading all into memory.
+    """
+    logging.info(f"[ML] Streaming analysis of directory: {leak_dir}")
+    
+    # Get all files
+    files = [f for f in os.listdir(leak_dir) if os.path.isfile(os.path.join(leak_dir, f))]
+    
+    if not files:
+        logging.warning("[ML] No files found in directory")
+        return False
+    
+    # Initialize counters for aggregating across all files
+    append_counter = Counter()
+    prepend_counter = Counter()
+    char_subs = {}
+    total_processed = 0
+    
+    logging.info(f"[ML] Found {len(files)} files to process")
+    
+    for idx, fname in enumerate(files, 1):
+        fpath = os.path.join(leak_dir, fname)
+        logging.info(f"[ML] Processing file {idx}/{len(files)}: {fname}")
+        
+        if progress_callback:
+            progress_callback("status", f"Analyzing leak file {idx}/{len(files)}: {fname}")
+        
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                chunk = []
+                
+                for line in f:
+                    pwd = line.strip()
+                    
+                    if 4 <= len(pwd) <= 40:
+                        chunk.append(pwd.lower())
+                        total_processed += 1
+                    
+                    # Process chunk when full
+                    if len(chunk) >= chunk_size:
+                        mangler_ml._update_pattern_counters(chunk, append_counter, prepend_counter, char_subs)
+                        chunk = []
+                        
+                        # Log progress periodically
+                        if total_processed % (chunk_size * 10) == 0:
+                            logging.info(f"[ML] Processed {total_processed:,} passwords so far...")
+                
+                # Process remaining chunk
+                if chunk:
+                    mangler_ml._update_pattern_counters(chunk, append_counter, prepend_counter, char_subs)
+                    
+        except Exception as e:
+            logging.warning(f"[ML] Failed to read {fpath}: {e}")
+            continue
+    
+    if total_processed < 100:
+        logging.warning("[ML] Not enough passwords for meaningful analysis")
+        return False
+    
+    logging.info(f"[ML] Completed directory analysis: {total_processed:,} passwords from {len(files)} files")
+    
+    # Apply learned patterns
+    mangler_ml._apply_learned_patterns(append_counter, prepend_counter, char_subs, total_processed)
+    
+    # Save to cache
+    if use_cache:
+        cache_path = mangler_ml._get_cache_path(leak_dir)
+        patterns = {
+            "appends": mangler_core.learned_appends,
+            "prefixes": mangler_core.learned_prefixes,
+            "leet": mangler_core.learned_leet,
+            "weights": mangler_core.learned_weights,
+        }
+        mangler_ml._save_cached_patterns(cache_path, patterns)
+    
+    return True
 
 
 # Export main functions
