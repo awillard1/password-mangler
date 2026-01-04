@@ -6,13 +6,204 @@ After ML analysis, this module allows querying learned patterns to:
 2. Suggest variations for specific words
 3. Export patterns in various formats
 4. Merge patterns from multiple sources
+5. Validate and manage caches
+6. Batch process multiple words
 """
 
 import os
 import json
 import logging
+import time
 from typing import List, Dict, Set, Tuple
 from collections import Counter
+
+
+def validate_cache(cache_hash: str = None, cache_file: str = None) -> Dict[str, any]:
+    """
+    Validate ML cache integrity and structure.
+    
+    Args:
+        cache_hash: Cache hash
+        cache_file: Direct path to cache file
+    
+    Returns:
+        Dictionary with validation results
+    """
+    results = {
+        'valid': True,
+        'errors': [],
+        'warnings': [],
+        'info': {}
+    }
+    
+    try:
+        # Load the cache
+        if cache_file:
+            filepath = cache_file
+        elif cache_hash:
+            cache_dir = os.path.expanduser("~/.cache/password-mangler")
+            filepath = os.path.join(cache_dir, f"ml_patterns_{cache_hash}.json")
+        else:
+            results['valid'] = False
+            results['errors'].append("Must provide cache_hash or cache_file")
+            return results
+        
+        # Check file exists
+        if not os.path.exists(filepath):
+            results['valid'] = False
+            results['errors'].append(f"Cache file not found: {filepath}")
+            return results
+        
+        results['info']['file_path'] = filepath
+        results['info']['file_size'] = os.path.getsize(filepath)
+        
+        # Check JSON structure
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            results['valid'] = False
+            results['errors'].append(f"Invalid JSON: {e}")
+            return results
+        
+        # Check required fields
+        required_fields = ['appends', 'prepends', 'leet']
+        for field in required_fields:
+            if field not in data:
+                results['valid'] = False
+                results['errors'].append(f"Missing required field: {field}")
+            else:
+                # Check field is a dict
+                if not isinstance(data[field], dict):
+                    results['valid'] = False
+                    results['errors'].append(f"Field '{field}' must be a dictionary")
+                else:
+                    results['info'][f'{field}_count'] = len(data[field])
+        
+        # Check optional but expected fields
+        if 'source_file' not in data:
+            results['warnings'].append("Missing 'source_file' metadata")
+        else:
+            results['info']['source_file'] = data['source_file']
+        
+        if 'cache_time' not in data:
+            results['warnings'].append("Missing 'cache_time' metadata")
+        else:
+            results['info']['cache_time'] = data['cache_time']
+        
+        if 'ml_model' not in data:
+            results['warnings'].append("Missing 'ml_model' metadata")
+        else:
+            results['info']['ml_model'] = data['ml_model']
+        
+        # Check data integrity
+        for field in ['appends', 'prepends', 'leet']:
+            if field in data and isinstance(data[field], dict):
+                for key, value in data[field].items():
+                    if not isinstance(value, (int, float)):
+                        results['warnings'].append(f"Non-numeric value in {field}: {key} = {value}")
+        
+        # Check if empty
+        total_patterns = sum(len(data.get(f, {})) for f in ['appends', 'prepends', 'leet'])
+        if total_patterns == 0:
+            results['warnings'].append("Cache contains no patterns")
+        
+        results['info']['total_patterns'] = total_patterns
+        
+    except Exception as e:
+        results['valid'] = False
+        results['errors'].append(f"Validation error: {e}")
+    
+    return results
+
+
+def cleanup_caches(older_than_days: int = None, confirm: bool = True) -> int:
+    """
+    Clean up old or all ML caches.
+    
+    Args:
+        older_than_days: Remove caches older than N days (None = all)
+        confirm: Require user confirmation before deletion
+    
+    Returns:
+        Number of caches removed
+    """
+    cache_dir = os.path.expanduser("~/.cache/password-mangler")
+    
+    if not os.path.exists(cache_dir):
+        logging.info("No cache directory found")
+        return 0
+    
+    # Find cache files
+    cache_files = []
+    for filename in os.listdir(cache_dir):
+        if filename.startswith('ml_patterns_') and filename.endswith('.json'):
+            filepath = os.path.join(cache_dir, filename)
+            
+            # Check age if specified
+            if older_than_days is not None:
+                age_days = (time.time() - os.path.getmtime(filepath)) / 86400
+                if age_days < older_than_days:
+                    continue
+            
+            cache_files.append(filepath)
+    
+    if not cache_files:
+        logging.info("No caches found matching criteria")
+        return 0
+    
+    # Show what will be deleted
+    print(f"\nFound {len(cache_files)} cache(s) to remove:")
+    for filepath in cache_files:
+        age_days = (time.time() - os.path.getmtime(filepath)) / 86400
+        size_kb = os.path.getsize(filepath) / 1024
+        print(f"  - {os.path.basename(filepath)} (age: {age_days:.1f} days, size: {size_kb:.1f} KB)")
+    
+    # Confirm deletion
+    if confirm:
+        response = input(f"\nDelete {len(cache_files)} cache file(s)? [y/N]: ")
+        if response.lower() not in ['y', 'yes']:
+            print("Cancelled")
+            return 0
+    
+    # Delete files
+    deleted = 0
+    for filepath in cache_files:
+        try:
+            os.remove(filepath)
+            # Also remove report if exists
+            report_file = filepath.replace('.json', '_report.txt')
+            if os.path.exists(report_file):
+                os.remove(report_file)
+            deleted += 1
+        except Exception as e:
+            logging.warning(f"Could not delete {filepath}: {e}")
+    
+    logging.info(f"Deleted {deleted} cache file(s)")
+    return deleted
+
+
+def batch_query_words(words: List[str], patterns: Dict, 
+                     top_n: int = 10, min_confidence: float = 0.01) -> Dict[str, List[Tuple[str, float]]]:
+    """
+    Query multiple words at once (much faster than individual queries).
+    
+    Args:
+        words: List of base words to query
+        patterns: Loaded ML patterns
+        top_n: Number of candidates per word
+        min_confidence: Minimum confidence threshold
+    
+    Returns:
+        Dictionary mapping word -> list of (password, confidence) tuples
+    """
+    results = {}
+    
+    for word in words:
+        candidates = generate_from_ml_patterns(word, patterns, top_n, min_confidence)
+        results[word] = candidates
+    
+    return results
 
 
 def list_cached_ml_patterns(cache_dir: str = None) -> List[Dict]:
@@ -434,4 +625,7 @@ __all__ = [
     'export_patterns_to_hashcat_rules',
     'generate_wordlist_from_ml',
     'query_ml_interactive',
+    'validate_cache',
+    'cleanup_caches',
+    'batch_query_words',
 ]

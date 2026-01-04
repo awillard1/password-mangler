@@ -225,6 +225,112 @@ def show_pattern_summary(cache_hash: str):
         sys.exit(1)
 
 
+def validate(cache_hash: str):
+    """Validate cache integrity."""
+    try:
+        print_banner()
+        print(f"Validating cache: {cache_hash}\n")
+        
+        results = mangler_ml_query.validate_cache(cache_hash=cache_hash)
+        
+        # Show results
+        if results['valid']:
+            print("✓ Cache is VALID\n")
+        else:
+            print("✗ Cache is INVALID\n")
+        
+        # Show info
+        if results['info']:
+            print("Cache Information:")
+            print("-" * 50)
+            for key, value in results['info'].items():
+                print(f"  {key}: {value}")
+            print()
+        
+        # Show errors
+        if results['errors']:
+            print("Errors:")
+            print("-" * 50)
+            for error in results['errors']:
+                print(f"  ✗ {error}")
+            print()
+        
+        # Show warnings
+        if results['warnings']:
+            print("Warnings:")
+            print("-" * 50)
+            for warning in results['warnings']:
+                print(f"  ⚠ {warning}")
+            print()
+        
+        return results['valid']
+    
+    except Exception as e:
+        logging.error(f"Validation failed: {e}")
+        return False
+
+
+def cleanup(older_than: int = None, force: bool = False):
+    """Clean up old caches."""
+    try:
+        print_banner()
+        
+        if older_than:
+            print(f"Cleaning caches older than {older_than} days...\n")
+        else:
+            print("Cleaning ALL caches...\n")
+        
+        count = mangler_ml_query.cleanup_caches(
+            older_than_days=older_than,
+            confirm=not force
+        )
+        
+        if count > 0:
+            logging.info(f"Cleaned up {count} cache(s)")
+        
+    except Exception as e:
+        logging.error(f"Cleanup failed: {e}")
+        sys.exit(1)
+
+
+def batch_query(input_file: str, output_file: str, cache_hash: str, 
+               top_n: int = 10, min_conf: float = 0.01):
+    """Batch query multiple words."""
+    try:
+        # Load words
+        logging.info(f"Loading words from {input_file}")
+        with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
+            words = [line.strip() for line in f if line.strip()]
+        
+        logging.info(f"Loaded {len(words)} words")
+        
+        # Load patterns
+        patterns = mangler_ml_query.load_ml_patterns(cache_hash=cache_hash)
+        logging.info(f"Loaded patterns from: {patterns.get('source_file', 'Unknown')}")
+        
+        # Batch query
+        logging.info(f"Querying patterns...")
+        results = mangler_ml_query.batch_query_words(
+            words, patterns, top_n=top_n, min_confidence=min_conf
+        )
+        
+        # Write results
+        with open(output_file, 'w', encoding='utf-8') as f:
+            for word, candidates in results.items():
+                f.write(f"# {word}\n")
+                for pwd, conf in candidates:
+                    f.write(f"{pwd}\t{conf:.3f}\n")
+                f.write("\n")
+        
+        total_candidates = sum(len(c) for c in results.values())
+        logging.info(f"SUCCESS! Generated {total_candidates} candidates for {len(words)} words")
+        logging.info(f"Results written to: {output_file}")
+        
+    except Exception as e:
+        logging.error(f"Batch query failed: {e}")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ML Pattern Query Tool - Query and reuse learned patterns",
