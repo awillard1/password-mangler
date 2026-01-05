@@ -4,7 +4,6 @@ Optimized for efficiency with streaming and sampling.
 """
 
 import logging
-from collections import Counter
 import re
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.cluster import MiniBatchKMeans
