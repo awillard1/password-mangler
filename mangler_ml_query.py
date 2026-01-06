@@ -304,8 +304,24 @@ def save_ml_patterns(appends: Dict[str, int], prepends: Dict[str, int],
     cache_dir = os.path.expanduser("~/.cache/password-mangler")
     os.makedirs(cache_dir, exist_ok=True)
     
-    # Generate cache hash from source file path and current time
-    hash_input = f"{source_file}_{datetime.now().isoformat()}"
+    # Generate stable cache hash from source file path and modification time
+    # This prevents duplicate caches for the same source file
+    try:
+        if os.path.exists(source_file):
+            if os.path.isdir(source_file):
+                # For directories, use path and file count
+                file_count = len([f for f in os.listdir(source_file) if os.path.isfile(os.path.join(source_file, f))])
+                hash_input = f"{os.path.abspath(source_file)}_{file_count}"
+            else:
+                # For files, use path and modification time
+                mtime = os.path.getmtime(source_file)
+                hash_input = f"{os.path.abspath(source_file)}_{mtime}"
+        else:
+            # Fallback if file doesn't exist (shouldn't happen)
+            hash_input = f"{source_file}_{datetime.now().isoformat()}"
+    except:
+        hash_input = f"{source_file}_{datetime.now().isoformat()}"
+    
     cache_hash = hashlib.md5(hash_input.encode()).hexdigest()[:12]
     
     # Convert leet dict format (char -> list) to leet with counts for consistency

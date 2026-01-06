@@ -173,12 +173,20 @@ def parse_file(input_file=None, output_file=None, ruleset="advanced",
                             # Batch insert for efficiency
                             if len(lines_buffer) >= 1000:
                                 for p in lines_buffer:
-                                    password_queue.put(p)
+                                    try:
+                                        password_queue.put(p, timeout=1.0)
+                                    except:
+                                        if _shutdown_requested:
+                                            break
                                 lines_buffer = []
                     
                     # Add remaining
                     for p in lines_buffer:
-                        password_queue.put(p)
+                        try:
+                            password_queue.put(p, timeout=1.0)
+                        except:
+                            if _shutdown_requested:
+                                break
                     
                 with stats_lock:
                     passwords_processed += local_count
