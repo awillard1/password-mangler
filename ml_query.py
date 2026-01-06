@@ -130,14 +130,14 @@ def generate_wordlist(input_file: str, output_file: str, cache_hash: str,
         sys.exit(1)
 
 
-def export_rules(output_file: str, cache_hash: str, max_rules: int = 100):
+def export_rules(output_file: str, cache_hash: str, max_rules: int = 500, ruleset: str = "advanced"):
     """Export ML patterns as Hashcat rules."""
     try:
         patterns = mangler_ml_query.load_ml_patterns(cache_hash=cache_hash)
         logging.info(f"Loaded patterns from: {patterns.get('source_file', 'Unknown')}")
         
         count = mangler_ml_query.export_patterns_to_hashcat_rules(
-            patterns, output_file, max_rules=max_rules
+            patterns, output_file, max_rules=max_rules, ruleset=ruleset
         )
         
         if count > 0:
@@ -590,8 +590,11 @@ Examples:
                        help="Output file")
     parser.add_argument("--top-n", type=int, default=20,
                        help="Number of candidates to show (default: 20)")
-    parser.add_argument("--max-rules", type=int, default=100,
-                       help="Maximum rules to export (default: 100)")
+    parser.add_argument("--max-rules", type=int, default=500,
+                       help="Maximum rules to export (default: 500)")
+    parser.add_argument("--ruleset", "-R", choices=["simple", "advanced", "extreme"],
+                       default="advanced",
+                       help="Rule complexity level for export (default: advanced)")
     parser.add_argument("--variations", type=int, default=10,
                        help="Variations per word in generation (default: 10)")
     
@@ -662,7 +665,7 @@ Examples:
             logging.info("Use --list to see available caches")
             sys.exit(1)
         
-        export_rules(args.export_rules, args.cache, args.max_rules)
+        export_rules(args.export_rules, args.cache, args.max_rules, args.ruleset)
         return
     
     # Merge caches
