@@ -14,6 +14,8 @@ import os
 import json
 import logging
 import time
+import hashlib
+from datetime import datetime
 from typing import List, Dict, Set, Tuple
 from collections import Counter
 
@@ -278,6 +280,140 @@ def load_ml_patterns(cache_hash: str = None, cache_file: str = None) -> Dict:
     
     with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def get_cache_hash_for_source(source_file: str) -> str:
+    """
+    Calculate the cache hash for a given source file.
+    This matches the logic in save_ml_patterns to find existing caches.
+    
+    Args:
+        source_file: Path to source leak file or directory
+    
+    Returns:
+        Cache hash that would be used for this source
+    """
+    try:
+        if os.path.exists(source_file):
+            if os.path.isdir(source_file):
+                # For directories, use path and file count
+                file_count = len([f for f in os.listdir(source_file) if os.path.isfile(os.path.join(source_file, f))])
+                hash_input = f"{os.path.abspath(source_file)}_{file_count}"
+            else:
+                # For files, use path and modification time
+                mtime = os.path.getmtime(source_file)
+                hash_input = f"{os.path.abspath(source_file)}_{mtime}"
+        else:
+            return None
+    except:
+        return None
+    
+    return hashlib.md5(hash_input.encode()).hexdigest()[:12]
+
+
+def check_cache_exists(source_file: str) -> tuple:
+    """
+    Check if a cache already exists for the given source file.
+    
+    Args:
+        source_file: Path to source leak file or directory
+    
+    Returns:
+        Tuple of (exists: bool, cache_hash: str or None, cache_file: str or None)
+    """
+    cache_hash = get_cache_hash_for_source(source_file)
+    if not cache_hash:
+        return (False, None, None)
+    
+    cache_dir = os.path.expanduser("~/.cache/password-mangler")
+    cache_file = os.path.join(cache_dir, f"ml_patterns_{cache_hash}.json")
+    
+    if os.path.exists(cache_file):
+        return (True, cache_hash, cache_file)
+    
+    return (False, cache_hash, None)
+
+
+def save_ml_patterns(appends: Dict[str, int], prepends: Dict[str, int], 
+                     leet: Dict[str, List[str]], source_file: str,
+                     base_word_transforms: Dict[str, List[Dict]] = None,
+                     ml_model: str = "counter") -> str:
+    """
+    Save ML patterns to cache file.
+    
+    Args:
+        appends: Dictionary of append patterns with counts
+        prepends: Dictionary of prepend patterns with counts
+        leet: Dictionary of leet substitution patterns
+        source_file: Path to the source leak file(s)
+        base_word_transforms: Optional dict mapping base_word -> list of {password, transformations, count}
+        ml_model: ML model used (default: "counter")
+    
+    Returns:
+        Cache hash (used to reference this cache later)
+    """
+    # Create cache directory
+    cache_dir = os.path.expanduser("~/.cache/password-mangler")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # Generate stable cache hash from source file path and modification time
+    # This prevents duplicate caches for the same source file
+    try:
+        if os.path.exists(source_file):
+            if os.path.isdir(source_file):
+                # For directories, use path and file count
+                file_count = len([f for f in os.listdir(source_file) if os.path.isfile(os.path.join(source_file, f))])
+                hash_input = f"{os.path.abspath(source_file)}_{file_count}"
+            else:
+                # For files, use path and modification time
+                mtime = os.path.getmtime(source_file)
+                hash_input = f"{os.path.abspath(source_file)}_{mtime}"
+        else:
+            # Fallback if file doesn't exist (shouldn't happen)
+            hash_input = f"{source_file}_{datetime.now().isoformat()}"
+    except:
+        hash_input = f"{source_file}_{datetime.now().isoformat()}"
+    
+    cache_hash = hashlib.md5(hash_input.encode()).hexdigest()[:12]
+    
+    # Convert leet dict format (char -> list) to leet with counts for consistency
+    leet_with_counts = {}
+    for char, subs in leet.items():
+        for sub in subs:
+            key = f"{char}->{sub}"
+            # Use count of 1 for learned leet patterns since we don't track frequency
+            leet_with_counts[key] = 1
+    
+    # Prepare pattern data
+    pattern_data = {
+        'source_file': source_file,
+        'cache_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'ml_model': ml_model,
+        'appends': appends,
+        'prepends': prepends,
+        'leet': leet_with_counts,
+        'base_word_transforms': base_word_transforms or {},
+        'metadata': {
+            'total_appends': len(appends),
+            'total_prepends': len(prepends),
+            'total_leet': len(leet_with_counts),
+            'total_base_words': len(base_word_transforms) if base_word_transforms else 0,
+            'total_patterns': len(appends) + len(prepends) + len(leet_with_counts)
+        }
+    }
+    
+    # Save to file
+    cache_file = os.path.join(cache_dir, f"ml_patterns_{cache_hash}.json")
+    with open(cache_file, 'w', encoding='utf-8') as f:
+        json.dump(pattern_data, f, indent=2)
+    
+    logging.info(f"[Cache] Saved ML patterns to cache: {cache_hash}")
+    logging.info(f"[Cache] File: {cache_file}")
+    logging.info(f"[Cache] Patterns: {len(appends)} appends, {len(prepends)} prepends, {len(leet_with_counts)} leet")
+    if base_word_transforms:
+        logging.info(f"[Cache] Base words: {len(base_word_transforms)} unique base words tracked")
+    
+    return cache_hash
 
 
 def generate_from_ml_patterns(base_word: str, patterns: Dict, 
@@ -560,54 +696,119 @@ def merge_ml_patterns(pattern_list: List[Dict]) -> Dict:
 
 
 def export_patterns_to_hashcat_rules(patterns: Dict, output_file: str, 
-                                     max_rules: int = 100) -> int:
+                                     max_rules: int = 500, ruleset: str = "advanced") -> int:
     """
     Export learned patterns as Hashcat rules.
+    Uses the same comprehensive rule generation as mangler_hashcat.py
+    but with learned patterns from the cache.
+    
+    NOTE: This includes both learned patterns from cache AND common base patterns
+    to match the full ruleset generated by mangler.py --hashcat-rules.
     
     Args:
         patterns: Loaded ML patterns
         output_file: Output file for Hashcat rules
-        max_rules: Maximum number of rules to generate
+        max_rules: Maximum number of rules to generate (default: 500)
+        ruleset: Rule complexity level ("simple", "advanced", "extreme")
     
     Returns:
         Number of rules written
     """
+    import mangler_core
+    
     rules = set()
     
-    appends = patterns.get('appends', {})
-    prepends = patterns.get('prepends', {})
+    # Get patterns from cache
+    cached_appends = patterns.get('appends', {})
+    cached_prepends = patterns.get('prepends', {})
+    leet_patterns = patterns.get('leet', {})
     
-    # Base rules
+    # Basic case transformations
     rules.add(':')  # Identity
-    rules.add('c')  # Capitalize
-    rules.add('u')  # Uppercase
     rules.add('l')  # Lowercase
+    rules.add('u')  # Uppercase
+    rules.add('c')  # Capitalize
+    rules.add('C')  # Lowercase first, uppercase rest
+    rules.add('t')  # Toggle case
+    rules.add('T0') # Toggle position 0
+    rules.add('T1') # Toggle position 1
+    rules.add('T2') # Toggle position 2
     
-    # Append rules (sorted by frequency)
-    for suffix, count in sorted(appends.items(), key=lambda x: x[1], reverse=True)[:50]:
-        rule = ''.join(f'${c}' for c in suffix)
-        rules.add(rule)
+    # Leet speak substitutions
+    # Use comprehensive leet mappings like mangler_hashcat does
+    for char, subs in mangler_core.leet_mappings.items():
+        for sub in subs[:4 if ruleset == "advanced" else 2]:
+            if len(sub) == 1:  # Only single-char substitutions for Hashcat
+                rules.add(f's{char}{sub}')
+                rules.add(f's{char.upper()}{sub}')
+    
+    # Add learned leet patterns from cache (in addition to base patterns)
+    for leet_key in leet_patterns.keys():
+        if '->' in leet_key:
+            char, sub = leet_key.split('->')
+            if len(sub) == 1:
+                rules.add(f's{char}{sub}')
+                rules.add(f's{char.upper()}{sub}')
+    
+    if ruleset in ["advanced", "extreme"]:
+        # Combine common patterns with learned patterns (like mangler_hashcat does)
+        # Convert common_suffixes to dict format for consistency
+        common_suffixes_dict = {s: 100 for s in mangler_core.common_suffixes[:30]}
+        all_appends = {**common_suffixes_dict, **cached_appends}
         
-        # Capitalize + append (common combo)
-        rules.add('c' + rule)
-    
-    # Prepend rules
-    for prefix, count in sorted(prepends.items(), key=lambda x: x[1], reverse=True)[:20]:
-        rule = ''.join(f'^{c}' for c in reversed(prefix))
-        rules.add(rule)
-    
-    # Leet speak rules
-    leet_map = {'a': '@', 'e': '3', 'i': '1', 'o': '0', 's': '$', 't': '7'}
-    for char, replacement in leet_map.items():
-        rules.add(f's{char}{replacement}')
+        common_prefixes_dict = {p: 100 for p in mangler_core.common_prefixes[:15]}
+        all_prepends = {**common_prefixes_dict, **cached_prepends}
         
-        # Leet + append combos
-        for suffix, count in sorted(appends.items(), key=lambda x: x[1], reverse=True)[:10]:
-            append_rule = ''.join(f'${c}' for c in suffix)
-            rules.add(f's{char}{replacement}{append_rule}')
+        # Append rules (sorted by frequency)
+        for suffix, count in sorted(all_appends.items(), key=lambda x: x[1], reverse=True)[:50]:
+            if 1 <= len(suffix) <= 8:
+                rule = ''.join(f'${c}' for c in suffix)
+                rules.add(rule)
+                if len(suffix) == 1:
+                    rules.add(f'${suffix}${suffix}')  # double common chars
+        
+        # Prepend rules
+        for prefix, count in sorted(all_prepends.items(), key=lambda x: x[1], reverse=True)[:20]:
+            if 1 <= len(prefix) <= 6:
+                rule = ''.join(f'^{c}' for c in reversed(prefix))
+                rules.add(rule)
+        
+        # Delete rules
+        rules.add('d')  # Duplicate entire word
+        rules.add('f')  # Duplicate entire word reversed
+        rules.add('r')  # Reverse
+        
+        # Character manipulation
+        for i in range(5):
+            rules.add(f'D{i}')  # Delete at position
+        rules.add('[')  # Delete first char
+        rules.add(']')  # Delete last char
+        
+        # Insert rules (common special chars)
+        for pos in range(4):
+            for char in ['!', '1', '@', '#', '$']:
+                rules.add(f'i{pos}{char}')  # Insert char at position
+    
+    if ruleset == "extreme":
+        # More aggressive combinations
+        for i in range(10):
+            rules.add(f'${i}')  # Append digits
+            rules.add(f'^{i}')  # Prepend digits
+        
+        # Special character appends
+        for char in '!@#$%^&*':
+            rules.add(f'${char}')
+            rules.add(f'^{char}')
+        
+        # Position-specific replacements
+        for pos in range(3):
+            for char in ['1', '3', '4', '5', '7', '0']:
+                rules.add(f'o{pos}{char}')  # Overwrite at position
     
     # Write to file
-    rules_list = sorted(list(rules))[:max_rules]
+    rules_list = sorted(list(rules))
+    if len(rules_list) > max_rules:
+        rules_list = rules_list[:max_rules]
     
     try:
         with open(output_file, 'w', encoding='utf-8') as f:
@@ -735,10 +936,79 @@ def query_ml_interactive(cache_hash: str = None):
     print("\nExiting interactive mode.")
 
 
+def query_base_word_transformations(base_word: str, patterns: Dict, 
+                                     top_n: int = 50) -> List[Dict]:
+    """
+    Query all transformations learned for a specific base word.
+    
+    Args:
+        base_word: The base word to search for (e.g., 'password', 'admin')
+        patterns: Loaded ML patterns dictionary
+        top_n: Maximum number of results to return
+    
+    Returns:
+        List of transformation dictionaries with password variants
+    """
+    base_word_transforms = patterns.get('base_word_transforms', {})
+    
+    # Case-insensitive search
+    base_word_lower = base_word.lower()
+    
+    results = []
+    
+    # Exact match
+    if base_word_lower in base_word_transforms:
+        transforms = base_word_transforms[base_word_lower]
+        results.extend(transforms[:top_n])
+    
+    # Also check for partial matches (base_word is substring)
+    for base, transforms in base_word_transforms.items():
+        if base_word_lower in base and base != base_word_lower:
+            for t in transforms[:5]:  # Limit partial matches
+                results.append({**t, 'base_word': base, 'match_type': 'partial'})
+    
+    # Sort by count/frequency if available
+    results.sort(key=lambda x: x.get('count', 0), reverse=True)
+    
+    return results[:top_n]
+
+
+def search_base_words(search_pattern: str, patterns: Dict, 
+                      limit: int = 20) -> List[str]:
+    """
+    Search for base words matching a pattern.
+    
+    Args:
+        search_pattern: Pattern to search for (substring match)
+        patterns: Loaded ML patterns dictionary
+        limit: Maximum results to return
+    
+    Returns:
+        List of matching base words
+    """
+    base_word_transforms = patterns.get('base_word_transforms', {})
+    pattern_lower = search_pattern.lower()
+    
+    matches = []
+    for base_word in base_word_transforms.keys():
+        if pattern_lower in base_word:
+            # Count total transformations for this base word
+            count = len(base_word_transforms[base_word])
+            matches.append((base_word, count))
+    
+    # Sort by number of transformations (descending)
+    matches.sort(key=lambda x: x[1], reverse=True)
+    
+    return [word for word, _ in matches[:limit]]
+
+
 # Export main functions
 __all__ = [
     'list_cached_ml_patterns',
     'load_ml_patterns',
+    'save_ml_patterns',
+    'get_cache_hash_for_source',
+    'check_cache_exists',
     'generate_from_ml_patterns',
     'suggest_patterns_for_word',
     'merge_ml_patterns',
@@ -748,4 +1018,6 @@ __all__ = [
     'validate_cache',
     'cleanup_caches',
     'batch_query_words',
+    'query_base_word_transformations',
+    'search_base_words',
 ]

@@ -130,14 +130,14 @@ def generate_wordlist(input_file: str, output_file: str, cache_hash: str,
         sys.exit(1)
 
 
-def export_rules(output_file: str, cache_hash: str, max_rules: int = 100):
+def export_rules(output_file: str, cache_hash: str, max_rules: int = 500, ruleset: str = "advanced"):
     """Export ML patterns as Hashcat rules."""
     try:
         patterns = mangler_ml_query.load_ml_patterns(cache_hash=cache_hash)
         logging.info(f"Loaded patterns from: {patterns.get('source_file', 'Unknown')}")
         
         count = mangler_ml_query.export_patterns_to_hashcat_rules(
-            patterns, output_file, max_rules=max_rules
+            patterns, output_file, max_rules=max_rules, ruleset=ruleset
         )
         
         if count > 0:
@@ -467,6 +467,72 @@ def find_intersections(cache_hashes: list):
         sys.exit(1)
 
 
+def query_base_word(base_word: str, cache_hash: str, top_n: int = 50):
+    """Query all transformations for a specific base word."""
+    try:
+        patterns = mangler_ml_query.load_ml_patterns(cache_hash=cache_hash)
+        results = mangler_ml_query.query_base_word_transformations(base_word, patterns, top_n)
+        
+        if not results:
+            print(f"\nNo transformations found for base word '{base_word}'")
+            print("\nTip: Try --search-bases to find similar base words")
+            return
+        
+        print(f"\n{'='*70}")
+        print(f"TRANSFORMATIONS FOR BASE WORD: '{base_word}'")
+        print(f"{'='*70}\n")
+        
+        print(f"Found {len(results)} password variant(s):\n")
+        
+        for i, result in enumerate(results[:top_n], 1):
+            pwd = result.get('password', '')
+            count = result.get('count', 0)
+            transforms = result.get('transformations', [])
+            match_type = result.get('match_type', 'exact')
+            
+            print(f"{i:3}. {pwd:30} (count: {count:,})")
+            if transforms:
+                print(f"     Transforms: {', '.join(transforms)}")
+            if match_type == 'partial':
+                base = result.get('base_word', '')
+                print(f"     Note: Partial match from base '{base}'")
+            print()
+        
+    except FileNotFoundError:
+        logging.error(f"Cache not found: {cache_hash}")
+        logging.info("Use --list to see available caches")
+    except Exception as e:
+        logging.error(f"Query failed: {e}")
+
+
+def search_base_words_cli(pattern: str, cache_hash: str):
+    """Search for base words matching a pattern."""
+    try:
+        patterns = mangler_ml_query.load_ml_patterns(cache_hash=cache_hash)
+        results = mangler_ml_query.search_base_words(pattern, patterns, limit=50)
+        
+        if not results:
+            print(f"\nNo base words found matching '{pattern}'")
+            return
+        
+        print(f"\n{'='*70}")
+        print(f"BASE WORDS MATCHING: '{pattern}'")
+        print(f"{'='*70}\n")
+        
+        print(f"Found {len(results)} base word(s):\n")
+        
+        for i, base_word in enumerate(results, 1):
+            print(f"{i:3}. {base_word}")
+        
+        print(f"\nTip: Use --base-word '{results[0]}' to see all transformations")
+        
+    except FileNotFoundError:
+        logging.error(f"Cache not found: {cache_hash}")
+        logging.info("Use --list to see available caches")
+    except Exception as e:
+        logging.error(f"Search failed: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ML Pattern Query Tool - Query and reuse learned patterns",
@@ -502,6 +568,10 @@ Examples:
                        help="Interactive query mode")
     parser.add_argument("--word", "-w", metavar="WORD",
                        help="Query patterns for specific word")
+    parser.add_argument("--base-word", "-b", metavar="BASE",
+                       help="Query all transformations for a base word (e.g., 'password')")
+    parser.add_argument("--search-bases", metavar="PATTERN",
+                       help="Search for base words matching pattern")
     parser.add_argument("--generate", "-g", metavar="INPUT",
                        help="Generate wordlist from base words using ML patterns")
     parser.add_argument("--export-rules", "-r", metavar="OUTPUT",
@@ -520,8 +590,11 @@ Examples:
                        help="Output file")
     parser.add_argument("--top-n", type=int, default=20,
                        help="Number of candidates to show (default: 20)")
-    parser.add_argument("--max-rules", type=int, default=100,
-                       help="Maximum rules to export (default: 100)")
+    parser.add_argument("--max-rules", type=int, default=500,
+                       help="Maximum rules to export (default: 500)")
+    parser.add_argument("--ruleset", "-R", choices=["simple", "advanced", "extreme"],
+                       default="advanced",
+                       help="Rule complexity level for export (default: advanced)")
     parser.add_argument("--variations", type=int, default=10,
                        help="Variations per word in generation (default: 10)")
     
@@ -539,6 +612,26 @@ Examples:
     # Interactive mode
     if args.interactive:
         mangler_ml_query.query_ml_interactive(cache_hash=args.cache)
+        return
+    
+    # Query base word transformations
+    if args.base_word:
+        if not args.cache:
+            logging.error("Must specify --cache for base word queries")
+            logging.info("Use --list to see available caches")
+            sys.exit(1)
+        
+        query_base_word(args.base_word, args.cache, args.top_n)
+        return
+    
+    # Search for base words
+    if args.search_bases:
+        if not args.cache:
+            logging.error("Must specify --cache for base word search")
+            logging.info("Use --list to see available caches")
+            sys.exit(1)
+        
+        search_base_words_cli(args.search_bases, args.cache)
         return
     
     # Query specific word
@@ -572,7 +665,7 @@ Examples:
             logging.info("Use --list to see available caches")
             sys.exit(1)
         
-        export_rules(args.export_rules, args.cache, args.max_rules)
+        export_rules(args.export_rules, args.cache, args.max_rules, args.ruleset)
         return
     
     # Merge caches
