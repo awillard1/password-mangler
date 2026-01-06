@@ -886,4 +886,3 @@ __all__ = [
     'query_base_word_transformations',
     'search_base_words',
 ]
-]
