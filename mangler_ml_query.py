@@ -282,6 +282,58 @@ def load_ml_patterns(cache_hash: str = None, cache_file: str = None) -> Dict:
         return json.load(f)
 
 
+def get_cache_hash_for_source(source_file: str) -> str:
+    """
+    Calculate the cache hash for a given source file.
+    This matches the logic in save_ml_patterns to find existing caches.
+    
+    Args:
+        source_file: Path to source leak file or directory
+    
+    Returns:
+        Cache hash that would be used for this source
+    """
+    try:
+        if os.path.exists(source_file):
+            if os.path.isdir(source_file):
+                # For directories, use path and file count
+                file_count = len([f for f in os.listdir(source_file) if os.path.isfile(os.path.join(source_file, f))])
+                hash_input = f"{os.path.abspath(source_file)}_{file_count}"
+            else:
+                # For files, use path and modification time
+                mtime = os.path.getmtime(source_file)
+                hash_input = f"{os.path.abspath(source_file)}_{mtime}"
+        else:
+            return None
+    except:
+        return None
+    
+    return hashlib.md5(hash_input.encode()).hexdigest()[:12]
+
+
+def check_cache_exists(source_file: str) -> tuple:
+    """
+    Check if a cache already exists for the given source file.
+    
+    Args:
+        source_file: Path to source leak file or directory
+    
+    Returns:
+        Tuple of (exists: bool, cache_hash: str or None, cache_file: str or None)
+    """
+    cache_hash = get_cache_hash_for_source(source_file)
+    if not cache_hash:
+        return (False, None, None)
+    
+    cache_dir = os.path.expanduser("~/.cache/password-mangler")
+    cache_file = os.path.join(cache_dir, f"ml_patterns_{cache_hash}.json")
+    
+    if os.path.exists(cache_file):
+        return (True, cache_hash, cache_file)
+    
+    return (False, cache_hash, None)
+
+
 def save_ml_patterns(appends: Dict[str, int], prepends: Dict[str, int], 
                      leet: Dict[str, List[str]], source_file: str,
                      base_word_transforms: Dict[str, List[Dict]] = None,
@@ -890,6 +942,8 @@ __all__ = [
     'list_cached_ml_patterns',
     'load_ml_patterns',
     'save_ml_patterns',
+    'get_cache_hash_for_source',
+    'check_cache_exists',
     'generate_from_ml_patterns',
     'suggest_patterns_for_word',
     'merge_ml_patterns',

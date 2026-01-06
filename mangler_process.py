@@ -136,221 +136,264 @@ def parse_file(input_file=None, output_file=None, ruleset="advanced",
     
     # Step 1: ML Analysis - Now supports directory of leak files with streaming
     if leak_path and os.path.exists(leak_path):
-        logging.info("[Main] Starting ML-based rule learning...")
-        if progress_callback:
-            progress_callback("status", "Analyzing leak data with ML...")
-
-        # Collect all passwords for base word analysis
-        all_passwords_for_base = []
-        passwords_processed = 0
+        # Check if cache already exists
+        cache_exists, existing_hash, existing_cache_file = mangler_ml_query.check_cache_exists(leak_path)
         
-        # For parallel file reading
-        from queue import Queue
-        from threading import Thread, Lock
-        
-        password_queue = Queue(maxsize=10000)  # Buffer for passwords
-        stats_lock = Lock()
-
-        def read_file_worker(filepath, file_num):
-            """Worker to read a single file and add passwords to queue."""
-            nonlocal passwords_processed
-            local_count = 0
+        if cache_exists:
+            logging.info(f"[Cache] Found existing cache for {leak_path}")
+            logging.info(f"[Cache] Cache hash: {existing_hash}")
+            logging.info(f"[Cache] Loading cached patterns instead of re-analyzing...")
             
             try:
-                # Use larger buffer for faster reading (1MB buffer)
-                with open(filepath, "r", encoding="utf-8", errors="ignore", buffering=1024*1024) as f:
-                    # Read in chunks for better performance
-                    lines_buffer = []
-                    for line in f:
-                        if _shutdown_requested:
-                            break
-                        
-                        pwd = line.strip()
-                        if 4 <= len(pwd) <= 40:
-                            lines_buffer.append(pwd.lower())
-                            local_count += 1
-                            
-                            # Batch insert for efficiency
-                            if len(lines_buffer) >= 1000:
-                                for p in lines_buffer:
-                                    try:
-                                        password_queue.put(p, timeout=1.0)
-                                    except:
-                                        if _shutdown_requested:
-                                            break
-                                lines_buffer = []
-                    
-                    # Add remaining
-                    for p in lines_buffer:
-                        try:
-                            password_queue.put(p, timeout=1.0)
-                        except:
-                            if _shutdown_requested:
-                                break
-                    
-                with stats_lock:
-                    passwords_processed += local_count
-                    
-                logging.info(f"[ML] File {file_num} complete: {os.path.basename(filepath)} - {local_count:,} passwords")
+                # Load patterns from cache
+                cached_patterns = mangler_ml_query.load_ml_patterns(cache_hash=existing_hash)
+                
+                # Apply loaded patterns to mangler_core
+                appends_dict = cached_patterns.get('appends', {})
+                prepends_dict = cached_patterns.get('prepends', {})
+                leet_dict = cached_patterns.get('leet', {})
+                
+                # Convert appends/prepends back to lists
+                mangler_core.learned_appends[:] = list(appends_dict.keys())
+                mangler_core.learned_prefixes[:] = list(prepends_dict.keys())
+                
+                # Convert leet back to the expected format
+                mangler_core.learned_leet.clear()
+                for leet_key in leet_dict.keys():
+                    if '->' in leet_key:
+                        char, sub = leet_key.split('->')
+                        if char not in mangler_core.learned_leet:
+                            mangler_core.learned_leet[char] = []
+                        if sub not in mangler_core.learned_leet[char]:
+                            mangler_core.learned_leet[char].append(sub)
+                
+                cache_hash = existing_hash
+                base_word_transforms = cached_patterns.get('base_word_transforms', {})
+                
+                logging.info(f"[Cache] Loaded {len(mangler_core.learned_appends)} appends, {len(mangler_core.learned_prefixes)} prepends")
+                logging.info(f"[Cache] Use 'python3 ml_query.py --cache {cache_hash}' to query patterns")
                 
             except Exception as e:
-                logging.warning(f"[ML] Failed to read {filepath}: {e}")
+                logging.warning(f"[Cache] Failed to load cache, will re-analyze: {e}")
+                cache_exists = False
+        
+        # Only analyze if cache doesn't exist or failed to load
+        if not cache_exists:
+            logging.info("[Main] Starting ML-based rule learning...")
+            if progress_callback:
+                progress_callback("status", "Analyzing leak data with ML...")
 
-        def password_iterator():
-            """Generator that yields passwords from files without loading all into memory."""
-            nonlocal passwords_processed
+            # Collect all passwords for base word analysis
+            all_passwords_for_base = []
+            passwords_processed = 0
             
-            if os.path.isdir(leak_path):
-                logging.info(f"[ML] Parallel streaming analysis of directory: {leak_path}")
+            # For parallel file reading
+            from queue import Queue
+            from threading import Thread, Lock
+            
+            password_queue = Queue(maxsize=10000)  # Buffer for passwords
+            stats_lock = Lock()
+    
+            def read_file_worker(filepath, file_num):
+                """Worker to read a single file and add passwords to queue."""
+                nonlocal passwords_processed
+                local_count = 0
                 
-                # Get all files to process
-                files_to_process = []
-                for fname in os.listdir(leak_path):
-                    fpath = os.path.join(leak_path, fname)
-                    if os.path.isfile(fpath):
-                        files_to_process.append(fpath)
-                
-                if not files_to_process:
-                    logging.warning(f"[ML] No files found in directory: {leak_path}")
-                    return
-                
-                logging.info(f"[ML] Found {len(files_to_process)} files to process in parallel")
-                
-                # Start reader threads (limit to CPU count for IO-bound tasks)
-                max_readers = min(os.cpu_count() or 4, len(files_to_process), 8)
-                reader_threads = []
-                
-                def file_reader_dispatcher():
-                    """Dispatch files to reader threads."""
-                    for idx, fpath in enumerate(files_to_process):
-                        if _shutdown_requested:
-                            break
-                        # Start reader in thread pool fashion
-                        t = Thread(target=read_file_worker, args=(fpath, idx + 1))
-                        t.daemon = True
-                        t.start()
-                        reader_threads.append(t)
-                        
-                        # Limit concurrent readers
-                        active = [t for t in reader_threads if t.is_alive()]
-                        while len(active) >= max_readers and not _shutdown_requested:
-                            # Wait for one to finish
-                            reader_threads[0].join(timeout=0.1)
-                            active = [t for t in reader_threads if t.is_alive()]
-                    
-                    # Wait for all readers to complete
-                    for t in reader_threads:
-                        t.join()
-                    
-                    # Signal completion
-                    password_queue.put(None)
-                
-                # Start dispatcher thread
-                dispatcher = Thread(target=file_reader_dispatcher)
-                dispatcher.daemon = True
-                dispatcher.start()
-                
-                # Yield passwords as they arrive
-                sample_count = 0
-                while True:
-                    pwd = password_queue.get()
-                    if pwd is None:  # Completion signal
-                        break
-                    
-                    # Collect sample for base word analysis
-                    if sample_count < 10000:
-                        all_passwords_for_base.append(pwd)
-                        sample_count += 1
-                    
-                    yield pwd
-                
-                # Wait for dispatcher to complete
-                dispatcher.join()
-                
-                logging.info(f"[ML] Finished parallel processing. Total: {passwords_processed:,} passwords from {len(files_to_process)} files")
-                
-            else:
-                # Single file processing - optimized with larger buffer
-                logging.info(f"[ML] Fast streaming analysis of file: {leak_path}")
                 try:
-                    # Use 1MB buffer for faster reading
-                    with open(leak_path, "r", encoding="utf-8", errors="ignore", buffering=1024*1024) as f:
+                    # Use larger buffer for faster reading (1MB buffer)
+                    with open(filepath, "r", encoding="utf-8", errors="ignore", buffering=1024*1024) as f:
+                        # Read in chunks for better performance
+                        lines_buffer = []
                         for line in f:
                             if _shutdown_requested:
-                                logging.warning(f"[ML] Shutdown requested while reading file. Saving partial results...")
                                 break
                             
                             pwd = line.strip()
                             if 4 <= len(pwd) <= 40:
-                                passwords_processed += 1
-                                # Collect sample for base word analysis
-                                if len(all_passwords_for_base) < 10000:
-                                    all_passwords_for_base.append(pwd.lower())
-                                yield pwd.lower()
+                                lines_buffer.append(pwd.lower())
+                                local_count += 1
+                                
+                                # Batch insert for efficiency
+                                if len(lines_buffer) >= 1000:
+                                    for p in lines_buffer:
+                                        try:
+                                            password_queue.put(p, timeout=1.0)
+                                        except:
+                                            if _shutdown_requested:
+                                                break
+                                    lines_buffer = []
+                        
+                        # Add remaining
+                        for p in lines_buffer:
+                            try:
+                                password_queue.put(p, timeout=1.0)
+                            except:
+                                if _shutdown_requested:
+                                    break
+                        
+                    with stats_lock:
+                        passwords_processed += local_count
+                        
+                    logging.info(f"[ML] File {file_num} complete: {os.path.basename(filepath)} - {local_count:,} passwords")
+                    
                 except Exception as e:
-                    logging.error(f"[ML] Failed to read leak file: {e}")
-        
-        # Use streaming analysis to process all data without memory exhaustion
-        try:
-            top_appends, top_prepends, learned_subs = mangler_core.analyze_patterns_streaming(
-                password_iterator(), batch_size=50000, top_n=50
-            )
+                    logging.warning(f"[ML] Failed to read {filepath}: {e}")
+    
+            def password_iterator():
+                """Generator that yields passwords from files without loading all into memory."""
+                nonlocal passwords_processed
+                
+                if os.path.isdir(leak_path):
+                    logging.info(f"[ML] Parallel streaming analysis of directory: {leak_path}")
+                    
+                    # Get all files to process
+                    files_to_process = []
+                    for fname in os.listdir(leak_path):
+                        fpath = os.path.join(leak_path, fname)
+                        if os.path.isfile(fpath):
+                            files_to_process.append(fpath)
+                    
+                    if not files_to_process:
+                        logging.warning(f"[ML] No files found in directory: {leak_path}")
+                        return
+                    
+                    logging.info(f"[ML] Found {len(files_to_process)} files to process in parallel")
+                    
+                    # Start reader threads (limit to CPU count for IO-bound tasks)
+                    max_readers = min(os.cpu_count() or 4, len(files_to_process), 8)
+                    reader_threads = []
+                    
+                    def file_reader_dispatcher():
+                        """Dispatch files to reader threads."""
+                        for idx, fpath in enumerate(files_to_process):
+                            if _shutdown_requested:
+                                break
+                            # Start reader in thread pool fashion
+                            t = Thread(target=read_file_worker, args=(fpath, idx + 1))
+                            t.daemon = True
+                            t.start()
+                            reader_threads.append(t)
+                            
+                            # Limit concurrent readers
+                            active = [t for t in reader_threads if t.is_alive()]
+                            while len(active) >= max_readers and not _shutdown_requested:
+                                # Wait for one to finish
+                                reader_threads[0].join(timeout=0.1)
+                                active = [t for t in reader_threads if t.is_alive()]
+                        
+                        # Wait for all readers to complete
+                        for t in reader_threads:
+                            t.join()
+                        
+                        # Signal completion
+                        password_queue.put(None)
+                    
+                    # Start dispatcher thread
+                    dispatcher = Thread(target=file_reader_dispatcher)
+                    dispatcher.daemon = True
+                    dispatcher.start()
+                    
+                    # Yield passwords as they arrive
+                    sample_count = 0
+                    while True:
+                        pwd = password_queue.get()
+                        if pwd is None:  # Completion signal
+                            break
+                        
+                        # Collect sample for base word analysis
+                        if sample_count < 10000:
+                            all_passwords_for_base.append(pwd)
+                            sample_count += 1
+                        
+                        yield pwd
+                    
+                    # Wait for dispatcher to complete
+                    dispatcher.join()
+                    
+                    logging.info(f"[ML] Finished parallel processing. Total: {passwords_processed:,} passwords from {len(files_to_process)} files")
+                    
+                else:
+                    # Single file processing - optimized with larger buffer
+                    logging.info(f"[ML] Fast streaming analysis of file: {leak_path}")
+                    try:
+                        # Use 1MB buffer for faster reading
+                        with open(leak_path, "r", encoding="utf-8", errors="ignore", buffering=1024*1024) as f:
+                            for line in f:
+                                if _shutdown_requested:
+                                    logging.warning(f"[ML] Shutdown requested while reading file. Saving partial results...")
+                                    break
+                                
+                                pwd = line.strip()
+                                if 4 <= len(pwd) <= 40:
+                                    passwords_processed += 1
+                                    # Collect sample for base word analysis
+                                    if len(all_passwords_for_base) < 10000:
+                                        all_passwords_for_base.append(pwd.lower())
+                                    yield pwd.lower()
+                    except Exception as e:
+                        logging.error(f"[ML] Failed to read leak file: {e}")
             
-            # Analyze base words from collected sample
-            if all_passwords_for_base and not _shutdown_requested:
-                logging.info(f"[ML] Analyzing base words from {len(all_passwords_for_base)} password sample...")
-                base_word_transforms = mangler_core.analyze_base_word_transformations(
-                    all_passwords_for_base, max_base_words=500, min_occurrences=2
+            # Use streaming analysis to process all data without memory exhaustion
+            try:
+                top_appends, top_prepends, learned_subs = mangler_core.analyze_patterns_streaming(
+                    password_iterator(), batch_size=50000, top_n=50
                 )
-                logging.info(f"[ML] Identified {len(base_word_transforms)} unique base words")
-            
-            mangler_core.learned_appends[:] = [a for a in top_appends if a not in mangler_core.common_suffixes and len(a) <= 6]
-            mangler_core.learned_prefixes[:] = [p for p in top_prepends if p not in mangler_core.common_prefixes and len(p) <= 6]
-            
-            for char, subs in learned_subs.items():
-                if char not in mangler_core.learned_leet:
-                    mangler_core.learned_leet[char] = []
-                for sub in subs:
-                    if sub not in mangler_core.learned_leet[char]:
-                        mangler_core.learned_leet[char].append(sub)
-            
-            logging.info(f"[ML] Learned {len(mangler_core.learned_appends)} appends, {len(mangler_core.learned_prefixes)} prepends")
-            
-            # Save ML patterns to cache (even if shutdown was requested - save what we have)
-            if passwords_processed > 0:
-                try:
-                    # Convert learned patterns to format expected by save function
-                    appends_dict = {a: top_appends.count(a) if isinstance(top_appends, list) else 1 
-                                   for a in mangler_core.learned_appends}
-                    prepends_dict = {p: top_prepends.count(p) if isinstance(top_prepends, list) else 1 
-                                    for p in mangler_core.learned_prefixes}
-                    
-                    # Save to cache
-                    cache_hash = mangler_ml_query.save_ml_patterns(
-                        appends=appends_dict,
-                        prepends=prepends_dict,
-                        leet=mangler_core.learned_leet,
-                        source_file=leak_path,
-                        base_word_transforms=base_word_transforms,
-                        ml_model="streaming_counter"
+                
+                # Analyze base words from collected sample
+                if all_passwords_for_base and not _shutdown_requested:
+                    logging.info(f"[ML] Analyzing base words from {len(all_passwords_for_base)} password sample...")
+                    base_word_transforms = mangler_core.analyze_base_word_transformations(
+                        all_passwords_for_base, max_base_words=500, min_occurrences=2
                     )
-                    
-                    logging.info(f"[ML] Successfully saved patterns to cache: {cache_hash}")
-                    logging.info(f"[ML] Use 'python3 ml_query.py --cache {cache_hash}' to query patterns")
-                    
-                except Exception as e:
-                    logging.error(f"[ML] Failed to save patterns to cache: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            if _shutdown_requested:
-                logging.warning("[ML] Analysis interrupted but partial results were saved to cache")
-                return False
-            
-        except Exception as e:
-            logging.error(f"[ML] Analysis failed: {e}")
-            import traceback
-            traceback.print_exc()
+                    logging.info(f"[ML] Identified {len(base_word_transforms)} unique base words")
+                
+                mangler_core.learned_appends[:] = [a for a in top_appends if a not in mangler_core.common_suffixes and len(a) <= 6]
+                mangler_core.learned_prefixes[:] = [p for p in top_prepends if p not in mangler_core.common_prefixes and len(p) <= 6]
+                
+                for char, subs in learned_subs.items():
+                    if char not in mangler_core.learned_leet:
+                        mangler_core.learned_leet[char] = []
+                    for sub in subs:
+                        if sub not in mangler_core.learned_leet[char]:
+                            mangler_core.learned_leet[char].append(sub)
+                
+                logging.info(f"[ML] Learned {len(mangler_core.learned_appends)} appends, {len(mangler_core.learned_prefixes)} prepends")
+                
+                # Save ML patterns to cache (even if shutdown was requested - save what we have)
+                if passwords_processed > 0:
+                    try:
+                        # Convert learned patterns to format expected by save function
+                        appends_dict = {a: top_appends.count(a) if isinstance(top_appends, list) else 1 
+                                       for a in mangler_core.learned_appends}
+                        prepends_dict = {p: top_prepends.count(p) if isinstance(top_prepends, list) else 1 
+                                        for p in mangler_core.learned_prefixes}
+                        
+                        # Save to cache
+                        cache_hash = mangler_ml_query.save_ml_patterns(
+                            appends=appends_dict,
+                            prepends=prepends_dict,
+                            leet=mangler_core.learned_leet,
+                            source_file=leak_path,
+                            base_word_transforms=base_word_transforms,
+                            ml_model="streaming_counter"
+                        )
+                        
+                        logging.info(f"[ML] Successfully saved patterns to cache: {cache_hash}")
+                        logging.info(f"[ML] Use 'python3 ml_query.py --cache {cache_hash}' to query patterns")
+                        
+                    except Exception as e:
+                        logging.error(f"[ML] Failed to save patterns to cache: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                if _shutdown_requested:
+                    logging.warning("[ML] Analysis interrupted but partial results were saved to cache")
+                    return False
+                
+            except Exception as e:
+                logging.error(f"[ML] Analysis failed: {e}")
+                import traceback
+                traceback.print_exc()
     
     # Check for shutdown before continuing
     if _shutdown_requested:
