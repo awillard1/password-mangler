@@ -156,21 +156,36 @@ python3 ml_query.py --base-word "admin" --cache abc123def456
 python3 ml_query.py --search-bases "user" --cache abc123def456
 ```
 
-### 5. Export Hashcat Rules from Cache (New!)
+### 5. Export Hashcat Rules from Cache (Updated!)
 
 ```bash
-# Generate hashcat rules directly from cached patterns
-# No need to re-analyze leak files!
+# Generate IDENTICAL hashcat rules to mangler.py (no re-analysis needed!)
 python3 ml_query.py --export-rules custom.rule --cache abc123def456
 
-# Customize number of rules
-python3 ml_query.py --export-rules custom.rule --cache abc123def456 --max-rules 200
+# Generates the SAME comprehensive ruleset as:
+# python3 mangler.py -o custom.rule --leak leaked.txt --hashcat-rules
+
+# Customize number of rules and complexity
+python3 ml_query.py --export-rules custom.rule --cache abc123def456 --max-rules 300 --ruleset extreme
 ```
 
 Output:
 ```
-[ML Query] Exported 100 rules to custom.rule
+[ML Query] Exported 170 rules to custom.rule
 ```
+
+**What's included:**
+- All leet speak substitutions (a→@, e→3, etc. with variants)
+- Common base patterns (123, 2024, !, etc.)
+- Learned patterns from your leak analysis
+- Character manipulation (delete, insert, toggle)
+- Case transformations (capitalize, uppercase, etc.)
+- **Result**: Identical output to mangler.py --hashcat-rules
+
+**Ruleset options:**
+- `simple`: Basic transformations (~21 rules)
+- `advanced`: Comprehensive set (~170 rules) - **default**
+- `extreme`: Maximum coverage (200+ rules)
 
 Sample rules generated:
 ```
@@ -179,14 +194,18 @@ c         # Capitalize
 $1$2$3    # Append "123"
 c$1$2$3   # Capitalize + append "123"
 sa@       # Substitute a→@
-sa@$1$2$3 # Leet + append
+sA@       # Substitute A→@
+sa4       # Substitute a→4
 ^2^0^2^4  # Prepend "2024"
+D0        # Delete position 0
+i1!       # Insert ! at position 1
 ```
 
 **When to use:**
 - Need hashcat rules based on leaked password patterns
 - Already have cached ML patterns from previous analysis
-- Want to generate rules without re-running full mangler.py
+- Want **identical** rules to mangler.py without re-analyzing
+- Much faster: <0.1 seconds vs 2+ seconds for full analysis
 
 ### 6. Generate Wordlist from Learned Patterns
 
