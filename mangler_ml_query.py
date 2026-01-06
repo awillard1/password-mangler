@@ -14,6 +14,8 @@ import os
 import json
 import logging
 import time
+import hashlib
+from datetime import datetime
 from typing import List, Dict, Set, Tuple
 from collections import Counter
 
@@ -278,6 +280,72 @@ def load_ml_patterns(cache_hash: str = None, cache_file: str = None) -> Dict:
     
     with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def save_ml_patterns(appends: Dict[str, int], prepends: Dict[str, int], 
+                     leet: Dict[str, List[str]], source_file: str,
+                     base_word_transforms: Dict[str, List[Dict]] = None,
+                     ml_model: str = "counter") -> str:
+    """
+    Save ML patterns to cache file.
+    
+    Args:
+        appends: Dictionary of append patterns with counts
+        prepends: Dictionary of prepend patterns with counts
+        leet: Dictionary of leet substitution patterns
+        source_file: Path to the source leak file(s)
+        base_word_transforms: Optional dict mapping base_word -> list of {password, transformations, count}
+        ml_model: ML model used (default: "counter")
+    
+    Returns:
+        Cache hash (used to reference this cache later)
+    """
+    # Create cache directory
+    cache_dir = os.path.expanduser("~/.cache/password-mangler")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # Generate cache hash from source file path and current time
+    hash_input = f"{source_file}_{datetime.now().isoformat()}"
+    cache_hash = hashlib.md5(hash_input.encode()).hexdigest()[:12]
+    
+    # Convert leet dict format (char -> list) to leet with counts for consistency
+    leet_with_counts = {}
+    for char, subs in leet.items():
+        for sub in subs:
+            key = f"{char}->{sub}"
+            # Use count of 1 for learned leet patterns since we don't track frequency
+            leet_with_counts[key] = 1
+    
+    # Prepare pattern data
+    pattern_data = {
+        'source_file': source_file,
+        'cache_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'ml_model': ml_model,
+        'appends': appends,
+        'prepends': prepends,
+        'leet': leet_with_counts,
+        'base_word_transforms': base_word_transforms or {},
+        'metadata': {
+            'total_appends': len(appends),
+            'total_prepends': len(prepends),
+            'total_leet': len(leet_with_counts),
+            'total_base_words': len(base_word_transforms) if base_word_transforms else 0,
+            'total_patterns': len(appends) + len(prepends) + len(leet_with_counts)
+        }
+    }
+    
+    # Save to file
+    cache_file = os.path.join(cache_dir, f"ml_patterns_{cache_hash}.json")
+    with open(cache_file, 'w', encoding='utf-8') as f:
+        json.dump(pattern_data, f, indent=2)
+    
+    logging.info(f"[Cache] Saved ML patterns to cache: {cache_hash}")
+    logging.info(f"[Cache] File: {cache_file}")
+    logging.info(f"[Cache] Patterns: {len(appends)} appends, {len(prepends)} prepends, {len(leet_with_counts)} leet")
+    if base_word_transforms:
+        logging.info(f"[Cache] Base words: {len(base_word_transforms)} unique base words tracked")
+    
+    return cache_hash
 
 
 def generate_from_ml_patterns(base_word: str, patterns: Dict, 
@@ -735,10 +803,77 @@ def query_ml_interactive(cache_hash: str = None):
     print("\nExiting interactive mode.")
 
 
+def query_base_word_transformations(base_word: str, patterns: Dict, 
+                                     top_n: int = 50) -> List[Dict]:
+    """
+    Query all transformations learned for a specific base word.
+    
+    Args:
+        base_word: The base word to search for (e.g., 'password', 'admin')
+        patterns: Loaded ML patterns dictionary
+        top_n: Maximum number of results to return
+    
+    Returns:
+        List of transformation dictionaries with password variants
+    """
+    base_word_transforms = patterns.get('base_word_transforms', {})
+    
+    # Case-insensitive search
+    base_word_lower = base_word.lower()
+    
+    results = []
+    
+    # Exact match
+    if base_word_lower in base_word_transforms:
+        transforms = base_word_transforms[base_word_lower]
+        results.extend(transforms[:top_n])
+    
+    # Also check for partial matches (base_word is substring)
+    for base, transforms in base_word_transforms.items():
+        if base_word_lower in base and base != base_word_lower:
+            for t in transforms[:5]:  # Limit partial matches
+                results.append({**t, 'base_word': base, 'match_type': 'partial'})
+    
+    # Sort by count/frequency if available
+    results.sort(key=lambda x: x.get('count', 0), reverse=True)
+    
+    return results[:top_n]
+
+
+def search_base_words(search_pattern: str, patterns: Dict, 
+                      limit: int = 20) -> List[str]:
+    """
+    Search for base words matching a pattern.
+    
+    Args:
+        search_pattern: Pattern to search for (substring match)
+        patterns: Loaded ML patterns dictionary
+        limit: Maximum results to return
+    
+    Returns:
+        List of matching base words
+    """
+    base_word_transforms = patterns.get('base_word_transforms', {})
+    pattern_lower = search_pattern.lower()
+    
+    matches = []
+    for base_word in base_word_transforms.keys():
+        if pattern_lower in base_word:
+            # Count total transformations for this base word
+            count = len(base_word_transforms[base_word])
+            matches.append((base_word, count))
+    
+    # Sort by number of transformations (descending)
+    matches.sort(key=lambda x: x[1], reverse=True)
+    
+    return [word for word, _ in matches[:limit]]
+
+
 # Export main functions
 __all__ = [
     'list_cached_ml_patterns',
     'load_ml_patterns',
+    'save_ml_patterns',
     'generate_from_ml_patterns',
     'suggest_patterns_for_word',
     'merge_ml_patterns',
@@ -748,4 +883,7 @@ __all__ = [
     'validate_cache',
     'cleanup_caches',
     'batch_query_words',
+    'query_base_word_transformations',
+    'search_base_words',
+]
 ]

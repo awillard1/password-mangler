@@ -599,12 +599,126 @@ def _process_batch(passwords, append_counter, prepend_counter, char_subs):
                         char_subs[char.lower()][c] += 1
 
 
+def extract_base_word(password: str, min_alpha_len: int = 3) -> str:
+    """
+    Extract the likely base word from a password by removing common transformations.
+    
+    Args:
+        password: The password to analyze
+        min_alpha_len: Minimum alphabetic sequence length to consider as base word
+    
+    Returns:
+        Likely base word (lowercase) or None if no suitable base found
+    """
+    if not password or len(password) < min_alpha_len:
+        return None
+    
+    pwd = password.lower()
+    
+    # Remove common numeric/special suffixes
+    for length in [1, 2, 3, 4, 5, 6]:
+        if len(pwd) > length + min_alpha_len:
+            suffix = pwd[-length:]
+            if suffix.isdigit() or any(c in suffix for c in special_chars):
+                potential_base = pwd[:-length]
+                # Check if remaining part is mostly alphabetic
+                alpha_count = sum(1 for c in potential_base if c.isalpha())
+                if alpha_count >= min_alpha_len and alpha_count / len(potential_base) >= 0.7:
+                    pwd = potential_base
+                    break
+    
+    # Remove common prefixes
+    for length in [1, 2, 3]:
+        if len(pwd) > length + min_alpha_len:
+            prefix = pwd[:length]
+            if prefix.isdigit() or any(c in prefix for c in special_chars):
+                potential_base = pwd[length:]
+                alpha_count = sum(1 for c in potential_base if c.isalpha())
+                if alpha_count >= min_alpha_len and alpha_count / len(potential_base) >= 0.7:
+                    pwd = potential_base
+                    break
+    
+    # Check if result is mostly alphabetic
+    if pwd:
+        alpha_count = sum(1 for c in pwd if c.isalpha())
+        if alpha_count >= min_alpha_len and alpha_count / len(pwd) >= 0.5:
+            # Reverse common leet speak to get base word
+            leet_reverse = {'@': 'a', '4': 'a', '3': 'e', '1': 'i', '0': 'o', '5': 's', '7': 't', '$': 's'}
+            base = ''.join(leet_reverse.get(c, c) for c in pwd)
+            # Remove non-alpha characters
+            base = ''.join(c for c in base if c.isalpha())
+            if len(base) >= min_alpha_len:
+                return base
+    
+    return None
+
+
+def analyze_base_word_transformations(passwords: List[str], 
+                                      max_base_words: int = 500,
+                                      min_occurrences: int = 2) -> Dict[str, List[Dict]]:
+    """
+    Analyze passwords to extract base words and their transformations.
+    
+    Args:
+        passwords: List of passwords to analyze
+        max_base_words: Maximum number of unique base words to track
+        min_occurrences: Minimum occurrences for a base word to be included
+    
+    Returns:
+        Dictionary mapping base_word -> list of {password, count, transformations}
+    """
+    base_word_map = {}  # base_word -> {password: count}
+    
+    for pwd in passwords:
+        base = extract_base_word(pwd)
+        if base and len(base) >= 3:
+            if base not in base_word_map:
+                base_word_map[base] = Counter()
+            base_word_map[base][pwd] += 1
+    
+    # Filter and format results
+    result = {}
+    for base, pwd_counts in base_word_map.items():
+        total_count = sum(pwd_counts.values())
+        if total_count >= min_occurrences:
+            # Create list of transformations
+            transforms = []
+            for pwd, count in pwd_counts.most_common():
+                # Describe the transformation
+                transform_desc = []
+                if pwd != base:
+                    if pwd[0].isupper():
+                        transform_desc.append("capitalize")
+                    if any(c.isdigit() for c in pwd):
+                        transform_desc.append("append_digits")
+                    if any(c in special_chars for c in pwd):
+                        transform_desc.append("special_chars")
+                    if any(c in '@0134$7' for c in pwd):
+                        transform_desc.append("leet")
+                
+                transforms.append({
+                    'password': pwd,
+                    'count': count,
+                    'transformations': transform_desc
+                })
+            
+            result[base] = transforms
+            
+            # Limit number of base words
+            if len(result) >= max_base_words:
+                break
+    
+    return result
+
+
 # Export main functions
 __all__ = [
     'generate_variations',
     'process_word',
     'analyze_patterns',
     'analyze_patterns_streaming',
+    'extract_base_word',
+    'analyze_base_word_transformations',
     'learned_appends',
     'learned_prefixes',
     'learned_leet',
